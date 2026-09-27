@@ -1,0 +1,10 @@
+{
+  "name": "CartoPartenaires - Cartographie de Terrain",
+  "description": "Application de cartographie et de repérage terrain des partenaires avec géolocalisation haute précision en temps réel, catégorisation personnalisée et visualisation cartographique interactive.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

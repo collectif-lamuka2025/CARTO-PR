@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <style>
+      .brand-stroke { stroke: #001f9c; stroke-width: 32; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .text-sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-weight: 400; font-size: 44px; fill: #001f9c; letter-spacing: 12px; }
+    </style>
+  </defs>
+  <rect width="512" height="512" rx="90" fill="#ffffff"/>
+  <text x="96" y="235" class="text-sub">THE</text>
+  <text x="305" y="340" class="text-sub">FLY</text>
+  <path d="M 215 190 L 295 190 A 18 18 0 0 1 313 208 L 313 252 L 415 210 M 215 190 L 215 340 L 105 340 A 18 18 0 0 1 87 322 L 87 268 A 18 18 0 0 1 105 250 L 415 250" class="brand-stroke"/>
+</svg>

@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'collectiflamuka2025@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['id', 'name', 'color', 'createdBy']) &&
+        data.keys().hasOnly(['id', 'name', 'color', 'icon', 'description', 'createdBy', 'createdAt']) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+        data.color is string && data.color.size() > 0 && data.color.size() <= 30 &&
+        (!('icon' in data) || (data.icon is string && data.icon.size() <= 50)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 100)) &&
+        data.createdBy == request.auth.uid;
+    }
+
+    function isValidPartnerLocation(data) {
+      return data.keys().hasAll(['id', 'name', 'categoryId', 'latitude', 'longitude', 'agentId']) &&
+        data.keys().hasOnly(['id', 'name', 'partnerName', 'categoryId', 'categoryName', 'categoryColor', 'latitude', 'longitude', 'altitude', 'accuracy', 'notes', 'phone', 'agentId', 'agentEmail', 'createdAt', 'updatedAt']) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
+        (!('partnerName' in data) || (data.partnerName is string && data.partnerName.size() <= 150)) &&
+        data.categoryId is string && data.categoryId.size() > 0 && data.categoryId.size() <= 100 &&
+        (!('categoryName' in data) || (data.categoryName is string && data.categoryName.size() <= 100)) &&
+        (!('categoryColor' in data) || (data.categoryColor is string && data.categoryColor.size() <= 30)) &&
+        data.latitude is number && data.latitude >= -90.0 && data.latitude <= 90.0 &&
+        data.longitude is number && data.longitude >= -180.0 && data.longitude <= 180.0 &&
+        (!('altitude' in data) || (data.altitude is number)) &&
+        (!('accuracy' in data) || (data.accuracy is number && data.accuracy >= 0)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 50)) &&
+        (!('agentEmail' in data) || (data.agentEmail is string && data.agentEmail.size() <= 150)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 100)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 100)) &&
+        data.agentId == request.auth.uid;
+    }
+
+    // Categories Collection
+    match /categories/{categoryId} {
+      allow read: if isSignedIn() && (resource.data.createdBy == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(categoryId) && isValidCategory(request.resource.data);
+      allow update: if isSignedIn() && isValidId(categoryId) &&
+        isValidCategory(request.resource.data) &&
+        (isOwner(resource.data.createdBy) || isAdmin()) &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.id == resource.data.id;
+      allow delete: if isSignedIn() && isValidId(categoryId) && (isOwner(resource.data.createdBy) || isAdmin());
+    }
+
+    // Locations Collection
+    match /locations/{locationId} {
+      allow read: if isSignedIn() && (resource.data.agentId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(locationId) && isValidPartnerLocation(request.resource.data);
+      allow update: if isSignedIn() && isValidId(locationId) &&
+        isValidPartnerLocation(request.resource.data) &&
+        (isOwner(resource.data.agentId) || isAdmin()) &&
+        request.resource.data.agentId == resource.data.agentId &&
+        request.resource.data.id == resource.data.id;
+      allow delete: if isSignedIn() && isValidId(locationId) && (isOwner(resource.data.agentId) || isAdmin());
+    }
+  }
+}

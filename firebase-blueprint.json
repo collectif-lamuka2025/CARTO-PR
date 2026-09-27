@@ -1,0 +1,134 @@
+{
+  "entities": {
+    "Category": {
+      "title": "Category",
+      "description": "A classification category for partner locations with customizable highlight colors and icons",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the category"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the category",
+          "maxLength": 100
+        },
+        "color": {
+          "type": "string",
+          "description": "Hex or theme color for distinctive map markers",
+          "maxLength": 30
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon identifier for visual recognition",
+          "maxLength": 50
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional notes or purpose of this category",
+          "maxLength": 500
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "User ID of the creator"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when category was created"
+        }
+      },
+      "required": ["id", "name", "color", "createdBy"]
+    },
+    "PartnerLocation": {
+      "title": "PartnerLocation",
+      "description": "Geographical location record captured on the field with precision data and category",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the location record"
+        },
+        "name": {
+          "type": "string",
+          "description": "Assigned name or partner location title",
+          "maxLength": 150
+        },
+        "partnerName": {
+          "type": "string",
+          "description": "Name of the partner or contact person met",
+          "maxLength": 150
+        },
+        "categoryId": {
+          "type": "string",
+          "description": "Associated category ID",
+          "maxLength": 100
+        },
+        "categoryName": {
+          "type": "string",
+          "description": "Snapshot of category name for display",
+          "maxLength": 100
+        },
+        "categoryColor": {
+          "type": "string",
+          "description": "Marker color associated with category",
+          "maxLength": 30
+        },
+        "latitude": {
+          "type": "number",
+          "description": "Real-time GPS latitude in degrees"
+        },
+        "longitude": {
+          "type": "number",
+          "description": "Real-time GPS longitude in degrees"
+        },
+        "altitude": {
+          "type": "number",
+          "description": "Altitude in meters above sea level"
+        },
+        "accuracy": {
+          "type": "number",
+          "description": "GPS accuracy in meters"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Field notes, observations, or contact details",
+          "maxLength": 1000
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone number of partner contact",
+          "maxLength": 50
+        },
+        "agentId": {
+          "type": "string",
+          "description": "UID of the field agent who captured the point"
+        },
+        "agentEmail": {
+          "type": "string",
+          "description": "Email of the field agent",
+          "maxLength": 150
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "name", "categoryId", "latitude", "longitude", "agentId"]
+    }
+  },
+  "firestore": {
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Categories created by users/admins for sorting and highlighting partner locations"
+    },
+    "/locations/{locationId}": {
+      "schema": "PartnerLocation",
+      "description": "Field partner GPS locations recorded by agents"
+    }
+  }
+}
