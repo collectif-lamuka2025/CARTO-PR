@@ -6,7 +6,17 @@ import {
   persistentMultipleTabManager,
   setLogLevel,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyAM-p-5xjkv_Ci014DDH4iCmg1Pix6486Y',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'deft-vim-9thv3.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'deft-vim-9thv3',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'deft-vim-9thv3.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '309862839008',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:309862839008:web:e3973cd7312cb664f75685',
+};
+
+const firestoreDatabaseId = import.meta.env.VITE_FIRESTORE_DATABASE_ID || 'ai-studio-daa60fbf-5873-40a6-83f5-99d6f3f184f3';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
@@ -14,7 +24,7 @@ const app = initializeApp(firebaseConfig);
 // Silence internal Firestore offline/reconnection console warnings
 setLogLevel('silent');
 
-// CRITICAL: Must use firestoreDatabaseId from firebase-applet-config.json
+// CRITICAL: Must use firestoreDatabaseId
 // Enable Firestore native persistent cache for seamless offline writes & background auto-sync
 export const db = initializeFirestore(
   app,
@@ -23,7 +33,7 @@ export const db = initializeFirestore(
       tabManager: persistentMultipleTabManager(),
     }),
   },
-  firebaseConfig.firestoreDatabaseId
+  firestoreDatabaseId
 );
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();

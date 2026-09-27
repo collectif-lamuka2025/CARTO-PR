@@ -28,7 +28,7 @@ import { SettingsView } from './components/SettingsView';
 import { Globe2, Loader2 } from 'lucide-react';
 
 const GOOGLE_MAPS_API_KEY =
-  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyDL3-Qydkh3_zHIg2BLfSQetcNkhJnl7pQ';
+  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 function AppContent() {
   const { accentConfig } = usePreferences();
