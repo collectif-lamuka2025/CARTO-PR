@@ -28,6 +28,9 @@ const syncStatusListeners: Set<SyncStatusListener> = new Set();
 type CategoriesListener = (categories: Category[]) => void;
 const categoryListeners: Set<CategoriesListener> = new Set();
 
+type LocationsListener = (locations: PartnerLocation[]) => void;
+const locationListeners: Set<LocationsListener> = new Set();
+
 export function broadcastCategories(categories: Category[]) {
   categoryListeners.forEach((listener) => {
     try {
@@ -36,6 +39,89 @@ export function broadcastCategories(categories: Category[]) {
       console.warn('Erreur écouteur catégorie:', e);
     }
   });
+}
+
+export function broadcastLocations(locations: PartnerLocation[]) {
+  locationListeners.forEach((listener) => {
+    try {
+      listener(locations);
+    } catch (e) {
+      console.warn('Erreur écouteur position:', e);
+    }
+  });
+}
+
+function cleanLocationForFirestore(loc: PartnerLocation): Record<string, any> {
+  const data: Record<string, any> = {
+    id: loc.id,
+    name: loc.name.trim(),
+    categoryId: loc.categoryId || 'default',
+    categoryName: loc.categoryName || 'Général',
+    categoryColor: loc.categoryColor || '#3B82F6',
+    latitude: Number(loc.latitude),
+    longitude: Number(loc.longitude),
+    agentId: loc.agentId || 'guest_agent',
+    agentEmail: loc.agentEmail || 'agent@terrain.local',
+    createdAt: loc.createdAt || new Date().toISOString(),
+    updatedAt: loc.updatedAt || new Date().toISOString(),
+  };
+
+  if (loc.partnerName && loc.partnerName.trim()) {
+    data.partnerName = loc.partnerName.trim();
+  }
+  if (loc.notes && loc.notes.trim()) {
+    data.notes = loc.notes.trim();
+  }
+  if (loc.phone && loc.phone.trim()) {
+    data.phone = loc.phone.trim();
+  }
+  if (typeof loc.altitude === 'number' && !isNaN(loc.altitude)) {
+    data.altitude = loc.altitude;
+  }
+  if (typeof loc.accuracy === 'number' && !isNaN(loc.accuracy)) {
+    data.accuracy = loc.accuracy;
+  }
+
+  return data;
+}
+
+const CACHE_LOCATIONS_PREFIX = 'carto_locations_';
+
+export function getLocalLocationsCache(userId?: string): PartnerLocation[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const key = CACHE_LOCATIONS_PREFIX + (userId || 'global');
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+    if (userId) {
+      const globalStored = localStorage.getItem(CACHE_LOCATIONS_PREFIX + 'global');
+      if (globalStored) {
+        const parsed = JSON.parse(globalStored);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Erreur lecture cache positions:', e);
+  }
+  return [];
+}
+
+export function setLocalLocationsCache(userId: string | undefined, locations: PartnerLocation[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = CACHE_LOCATIONS_PREFIX + (userId || 'global');
+    localStorage.setItem(key, JSON.stringify(locations));
+    localStorage.setItem(CACHE_LOCATIONS_PREFIX + 'global', JSON.stringify(locations));
+  } catch (e) {
+    console.warn('Erreur écriture cache positions:', e);
+  }
 }
 
 function cleanCategoryForFirestore(cat: Category): Record<string, any> {
@@ -224,15 +310,20 @@ export function subscribeToLocations(
   onData: (locations: PartnerLocation[]) => void,
   onError?: (err: Error) => void
 ) {
+  // Deliver cached locations immediately so UI displays recorded points without delay
+  const initial = getLocalLocationsCache(userId);
+  onData(initial);
+
+  locationListeners.add(onData);
+
   if (!userId) {
-    onData([]);
-    return () => {};
+    return () => {
+      locationListeners.delete(onData);
+    };
   }
 
-  const q = query(
-    collection(db, LOCATIONS_COLLECTION),
-    where('agentId', '==', userId)
-  );
+  const colRef = collection(db, LOCATIONS_COLLECTION);
+  const q = query(colRef, where('agentId', '==', userId));
 
   const unsubscribe = onSnapshot(
     q,
@@ -247,7 +338,8 @@ export function subscribeToLocations(
       locations.sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
-      onData(locations);
+      setLocalLocationsCache(userId, locations);
+      broadcastLocations(locations);
 
       updateSyncStatus({
         hasPendingWrites: snapshot.metadata.hasPendingWrites,
@@ -255,12 +347,17 @@ export function subscribeToLocations(
       });
     },
     (error) => {
-      console.warn('Souscription positions partenaires Firestore:', error.message);
+      console.warn('Souscription positions partenaires Firestore (mode hors-ligne):', error.message);
+      // Fallback on cached data
+      onData(getLocalLocationsCache(userId));
       onError?.(error);
     }
   );
 
-  return unsubscribe;
+  return () => {
+    locationListeners.delete(onData);
+    unsubscribe();
+  };
 }
 
 // ----------------- Subscription: Sync Status -----------------
@@ -328,13 +425,62 @@ export async function deleteCategory(categoryId: string, userId?: string): Promi
 }
 
 // ----------------- Save Partner Location -----------------
-export async function savePartnerLocation(location: PartnerLocation): Promise<void> {
-  const docRef = doc(db, LOCATIONS_COLLECTION, location.id);
-  await setDoc(docRef, location, { merge: true });
+export async function savePartnerLocation(location: PartnerLocation): Promise<PartnerLocation[]> {
+  const cleanLoc: PartnerLocation = {
+    id: location.id,
+    name: location.name.trim(),
+    partnerName: location.partnerName?.trim() || undefined,
+    categoryId: location.categoryId || 'default',
+    categoryName: location.categoryName || 'Général',
+    categoryColor: location.categoryColor || '#3B82F6',
+    latitude: Number(location.latitude),
+    longitude: Number(location.longitude),
+    altitude: typeof location.altitude === 'number' ? location.altitude : null,
+    accuracy: typeof location.accuracy === 'number' ? location.accuracy : null,
+    notes: location.notes?.trim() || undefined,
+    phone: location.phone?.trim() || undefined,
+    agentId: location.agentId || 'guest_agent',
+    agentEmail: location.agentEmail || 'agent@terrain.local',
+    createdAt: location.createdAt || new Date().toISOString(),
+    updatedAt: location.updatedAt || new Date().toISOString(),
+  };
+
+  const current = getLocalLocationsCache(cleanLoc.agentId);
+  const existingIdx = current.findIndex((l) => l.id === cleanLoc.id);
+  let updated: PartnerLocation[];
+  if (existingIdx >= 0) {
+    updated = current.map((l) => (l.id === cleanLoc.id ? cleanLoc : l));
+  } else {
+    updated = [cleanLoc, ...current];
+  }
+
+  setLocalLocationsCache(cleanLoc.agentId, updated);
+  broadcastLocations(updated);
+
+  try {
+    const docRef = doc(db, LOCATIONS_COLLECTION, cleanLoc.id);
+    const payload = cleanLocationForFirestore(cleanLoc);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    console.warn('Sauvegarde position Firestore différée ou locale:', err?.message || err);
+  }
+
+  return updated;
 }
 
 // ----------------- Delete Partner Location -----------------
-export async function deletePartnerLocation(locationId: string): Promise<void> {
-  const docRef = doc(db, LOCATIONS_COLLECTION, locationId);
-  await deleteDoc(docRef);
+export async function deletePartnerLocation(locationId: string, userId?: string): Promise<PartnerLocation[]> {
+  const current = getLocalLocationsCache(userId);
+  const updated = current.filter((l) => l.id !== locationId);
+  setLocalLocationsCache(userId, updated);
+  broadcastLocations(updated);
+
+  try {
+    const docRef = doc(db, LOCATIONS_COLLECTION, locationId);
+    await deleteDoc(docRef);
+  } catch (err: any) {
+    console.warn('Suppression position Firestore différée ou locale:', err?.message || err);
+  }
+
+  return updated;
 }

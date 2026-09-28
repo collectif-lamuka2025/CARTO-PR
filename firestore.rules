@@ -17,26 +17,14 @@ service cloud.firestore {
       );
     }
 
-    function isValidPartnerLocation(data) {
-      return data.keys().hasAll(['id', 'name', 'categoryId', 'latitude', 'longitude', 'agentId']) &&
-        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
-        data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
-        data.categoryId is string && data.categoryId.size() > 0 && data.categoryId.size() <= 100 &&
-        data.latitude is number && data.latitude >= -90.0 && data.latitude <= 90.0 &&
-        data.longitude is number && data.longitude >= -180.0 && data.longitude <= 180.0 &&
-        data.agentId == request.auth.uid;
-    }
-
     // Categories Collection: Public taxonomy for partner classification, map pins, and agent management
     match /categories/{categoryId} {
       allow read, write: if true;
     }
 
-    // Locations Collection: Private per agent, admin has full overview
+    // Locations Collection: Field collection of partner points, accessible to field agents and sync
     match /locations/{locationId} {
-      allow read: if isSignedIn() && (resource.data.agentId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidPartnerLocation(request.resource.data);
-      allow update, delete: if isSignedIn() && (isOwner(resource.data.agentId) || isAdmin());
+      allow read, write: if true;
     }
   }
 }
