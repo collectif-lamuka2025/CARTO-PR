@@ -90,6 +90,16 @@ export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
     categories[0]?.id || ''
   );
 
+  // Auto-sync selectedCategoryId if empty or current category was deleted
+  React.useEffect(() => {
+    if (categories.length > 0) {
+      const exists = categories.some((c) => c.id === selectedCategoryId);
+      if (!exists || !selectedCategoryId) {
+        setSelectedCategoryId(categories[0].id);
+      }
+    }
+  }, [categories, selectedCategoryId]);
+
   // Quick inline category creation state
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCatName, setNewCatName] = useState('');

@@ -11,6 +11,7 @@ import {
   subscribeToCategories,
   subscribeToLocations,
   seedDefaultCategoriesIfEmpty,
+  getLocalCategoriesCache,
 } from './services/locationService';
 import { Category, PartnerLocation } from './types';
 import { useGeolocation } from './hooks/useGeolocation';
@@ -37,7 +38,7 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<
     'map' | 'capture' | 'list' | 'categories' | 'assistant' | 'settings'
   >('map');
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<Category[]>(() => getLocalCategoriesCache());
   const [locations, setLocations] = useState<PartnerLocation[]>([]);
 
   const { gps, setSimulatedPosition } = useGeolocation();

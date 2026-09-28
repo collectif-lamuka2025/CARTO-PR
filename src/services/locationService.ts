@@ -5,14 +5,15 @@ import {
   deleteDoc,
   onSnapshot,
   query,
-  where,
   getDocs,
+  where,
 } from 'firebase/firestore';
-import { db, auth } from '../firebase/config';
-import { Category, PartnerLocation } from '../types';
+import { db } from '../firebase/config';
+import { Category, PartnerLocation, DEFAULT_STRATEGIC_CATEGORIES } from '../types';
 
 const CATEGORIES_COLLECTION = 'categories';
 const LOCATIONS_COLLECTION = 'locations';
+const CACHE_PREFIX = 'carto_categories_';
 
 // Subscribers for sync status
 export interface FirebaseSyncStatus {
@@ -45,101 +46,110 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// ----------------- Default Categories Seeder -----------------
+// ----------------- Local Storage Cache Helpers -----------------
+export function getLocalCategoriesCache(userId?: string): Category[] {
+  if (typeof window === 'undefined') return DEFAULT_STRATEGIC_CATEGORIES;
+  try {
+    const key = CACHE_PREFIX + (userId || 'global');
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Erreur lecture cache catégories:', e);
+  }
+  return DEFAULT_STRATEGIC_CATEGORIES;
+}
+
+export function setLocalCategoriesCache(userId: string | undefined, categories: Category[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = CACHE_PREFIX + (userId || 'global');
+    localStorage.setItem(key, JSON.stringify(categories));
+  } catch (e) {
+    console.warn('Erreur écriture cache catégories:', e);
+  }
+}
+
+// ----------------- Default Strategic Categories Seeder -----------------
 export async function seedDefaultCategoriesIfEmpty(userId: string): Promise<void> {
   if (!userId) return;
   try {
-    const q = query(
-      collection(db, CATEGORIES_COLLECTION),
-      where('createdBy', '==', userId)
-    );
-    const existing = await getDocs(q);
+    const colRef = collection(db, CATEGORIES_COLLECTION);
+    const existing = await getDocs(colRef);
     if (!existing.empty) return;
 
-    const defaults: Category[] = [
-      {
-        id: `cat_${userId}_commerce_1`,
-        name: 'Commerces & Boutiques',
-        color: '#10B981',
-        icon: 'Store',
-        description: 'Magasins partenaires, distributeurs et points de vente locaux.',
+    for (const cat of DEFAULT_STRATEGIC_CATEGORIES) {
+      const docPayload: Category = {
+        ...cat,
         createdBy: userId,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: `cat_${userId}_ong_2`,
-        name: 'ONG & Associations',
-        color: '#3B82F6',
-        icon: 'HeartHandshake',
-        description: 'Organisations non-gouvernementales et partenaires communautaires.',
-        createdBy: userId,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: `cat_${userId}_institution_3`,
-        name: 'Institutions Publiques',
-        color: '#8B5CF6',
-        icon: 'Building',
-        description: 'Services déconcentrés, mairies et partenaires étatiques.',
-        createdBy: userId,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: `cat_${userId}_sante_4`,
-        name: 'Centres de Santé & Pharmacies',
-        color: '#EF4444',
-        icon: 'Activity',
-        description: 'Structures sanitaires et relais de santé partenaires.',
-        createdBy: userId,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: `cat_${userId}_artisans_5`,
-        name: 'Artisans & Producteurs',
-        color: '#F59E0B',
-        icon: 'Sparkles',
-        description: 'Artisans, ateliers et producteurs agricoles partenaires.',
-        createdBy: userId,
-        createdAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const cat of defaults) {
-      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), cat, { merge: true });
+      };
+      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), docPayload, { merge: true });
     }
   } catch (error) {
     console.warn('Initialisation des catégories par défaut via Firebase:', error);
   }
 }
 
-// ----------------- Subscription: Categories (Real-time + Offline Firestore Persistence) -----------------
+export async function restoreStrategicCategories(userId: string): Promise<Category[]> {
+  const restored: Category[] = DEFAULT_STRATEGIC_CATEGORIES.map((cat) => ({
+    ...cat,
+    createdBy: userId || 'system',
+    createdAt: new Date().toISOString(),
+  }));
+
+  setLocalCategoriesCache(userId, restored);
+
+  try {
+    for (const cat of restored) {
+      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), cat, { merge: true });
+    }
+  } catch (error) {
+    console.warn('Erreur restauration catégories stratégiques:', error);
+  }
+
+  return restored;
+}
+
+// ----------------- Subscription: Categories -----------------
 export function subscribeToCategories(
   userId: string,
   onData: (categories: Category[]) => void,
   onError?: (err: Error) => void
 ) {
+  // Deliver cached or strategic defaults immediately so UI never starts empty
+  const initial = getLocalCategoriesCache(userId);
+  onData(initial);
+
   if (!userId) {
-    onData([]);
     return () => {};
   }
 
-  const q = query(
-    collection(db, CATEGORIES_COLLECTION),
-    where('createdBy', '==', userId)
-  );
+  const colRef = collection(db, CATEGORIES_COLLECTION);
 
   const unsubscribe = onSnapshot(
-    q,
+    colRef,
     { includeMetadataChanges: true },
-    (snapshot) => {
-      const categories: Category[] = [];
-      snapshot.forEach((d) => {
-        categories.push(d.data() as Category);
-      });
+    async (snapshot) => {
+      if (snapshot.empty) {
+        // If Firestore is completely empty, seed the strategic categories
+        await seedDefaultCategoriesIfEmpty(userId);
+        onData(DEFAULT_STRATEGIC_CATEGORIES);
+        setLocalCategoriesCache(userId, DEFAULT_STRATEGIC_CATEGORIES);
+      } else {
+        const categories: Category[] = [];
+        snapshot.forEach((d) => {
+          categories.push(d.data() as Category);
+        });
 
-      // Sort alphabetically
-      categories.sort((a, b) => a.name.localeCompare(b.name));
-      onData(categories);
+        // Sort alphabetically by category name
+        categories.sort((a, b) => a.name.localeCompare(b.name));
+        setLocalCategoriesCache(userId, categories);
+        onData(categories);
+      }
 
       updateSyncStatus({
         hasPendingWrites: snapshot.metadata.hasPendingWrites,
@@ -148,6 +158,8 @@ export function subscribeToCategories(
     },
     (error) => {
       console.warn('Souscription catégories Firestore:', error.message);
+      // Fallback on error to cached data
+      onData(getLocalCategoriesCache(userId));
       onError?.(error);
     }
   );
@@ -155,7 +167,7 @@ export function subscribeToCategories(
   return unsubscribe;
 }
 
-// ----------------- Subscription: Locations (Real-time + Offline Firestore Persistence) -----------------
+// ----------------- Subscription: Locations -----------------
 export function subscribeToLocations(
   userId: string,
   onData: (locations: PartnerLocation[]) => void,
@@ -209,25 +221,39 @@ export function subscribeToSyncStatus(listener: SyncStatusListener) {
   };
 }
 
-// ----------------- Save Category (Direct Firebase with Native Offline Cache) -----------------
+// ----------------- Save Category -----------------
 export async function saveCategory(category: Category): Promise<void> {
+  const current = getLocalCategoriesCache(category.createdBy);
+  const existingIdx = current.findIndex((c) => c.id === category.id);
+  let updated: Category[];
+  if (existingIdx >= 0) {
+    updated = current.map((c) => (c.id === category.id ? category : c));
+  } else {
+    updated = [...current, category];
+  }
+  setLocalCategoriesCache(category.createdBy, updated);
+
   const docRef = doc(db, CATEGORIES_COLLECTION, category.id);
   await setDoc(docRef, category, { merge: true });
 }
 
-// ----------------- Delete Category (Direct Firebase with Native Offline Cache) -----------------
-export async function deleteCategory(categoryId: string): Promise<void> {
+// ----------------- Delete Category -----------------
+export async function deleteCategory(categoryId: string, userId?: string): Promise<void> {
+  const current = getLocalCategoriesCache(userId);
+  const updated = current.filter((c) => c.id !== categoryId);
+  setLocalCategoriesCache(userId, updated);
+
   const docRef = doc(db, CATEGORIES_COLLECTION, categoryId);
   await deleteDoc(docRef);
 }
 
-// ----------------- Save Partner Location (Direct Firebase with Native Offline Cache) -----------------
+// ----------------- Save Partner Location -----------------
 export async function savePartnerLocation(location: PartnerLocation): Promise<void> {
   const docRef = doc(db, LOCATIONS_COLLECTION, location.id);
   await setDoc(docRef, location, { merge: true });
 }
 
-// ----------------- Delete Partner Location (Direct Firebase with Native Offline Cache) -----------------
+// ----------------- Delete Partner Location -----------------
 export async function deletePartnerLocation(locationId: string): Promise<void> {
   const docRef = doc(db, LOCATIONS_COLLECTION, locationId);
   await deleteDoc(docRef);

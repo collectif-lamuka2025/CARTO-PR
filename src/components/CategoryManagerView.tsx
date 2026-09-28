@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from 'firebase/auth';
 import { Category, DISTINCT_COLORS, CATEGORY_ICONS } from '../types';
-import { saveCategory, deleteCategory } from '../services/locationService';
+import { saveCategory, deleteCategory, restoreStrategicCategories } from '../services/locationService';
 import { usePreferences } from '../context/PreferencesContext';
 import {
   FolderKanban,
@@ -16,6 +16,9 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 
 interface CategoryManagerViewProps {
@@ -37,7 +40,8 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [formCollapsed, setFormCollapsed] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string; count: number } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,27 +84,40 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
     setDescription(cat.description || '');
   };
 
-  const handleDelete = async (catId: string, catName: string) => {
+  const promptDelete = (catId: string, catName: string) => {
     const count = locationsCountByCategory[catId] || 0;
-    if (
-      window.confirm(
-        `Êtes-vous sûr de vouloir supprimer la catégorie « ${catName} » ? ${
-          count > 0 ? `(${count} partenaire(s) y sont rattachés)` : ''
-        }`
-      )
-    ) {
-      try {
-        await deleteCategory(catId);
-      } catch (err) {
-        console.error('Erreur suppression catégorie:', err);
-      }
+    setCategoryToDelete({ id: catId, name: catName, count });
+  };
+
+  const confirmDelete = async () => {
+    if (!categoryToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteCategory(categoryToDelete.id, user?.uid);
+      setStatusMessage(`Catégorie « ${categoryToDelete.name} » supprimée.`);
+      setTimeout(() => setStatusMessage(null), 3000);
+      setCategoryToDelete(null);
+    } catch (err) {
+      console.error('Erreur suppression catégorie:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleRestoreDefaults = async () => {
+    try {
+      await restoreStrategicCategories(user?.uid || 'guest');
+      setStatusMessage('Catégories stratégiques restaurées avec succès.');
+      setTimeout(() => setStatusMessage(null), 3000);
+    } catch (err) {
+      console.error('Erreur restauration catégories:', err);
     }
   };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8 space-y-6 transition-colors">
       {/* Header */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-xl">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div
             className="p-2.5 rounded-xl text-white shadow-md shrink-0"
@@ -117,6 +134,15 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
             </p>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={handleRestoreDefaults}
+          className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-300 dark:border-slate-700 transition-all cursor-pointer shadow-xs"
+        >
+          <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
+          <span>Restaurer les catégories par défaut</span>
+        </button>
 
         {statusMessage && (
           <div className="mt-3 p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/80 border border-purple-200 dark:border-purple-500/40 text-purple-700 dark:text-purple-200 text-xs flex items-center gap-2">
@@ -302,14 +328,14 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       onClick={() => handleEdit(cat)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800"
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
                       title={t('common.edit')}
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(cat.id, cat.name)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-100 dark:hover:bg-slate-800"
+                      onClick={() => promptDelete(cat.id, cat.name)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-100 dark:hover:bg-slate-800 cursor-pointer"
                       title={t('common.delete')}
                     >
                       <Trash2 className="w-4 h-4" />
@@ -321,12 +347,60 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
 
             {categories.length === 0 && (
               <div className="text-center py-8 text-slate-500 text-xs">
-                Aucune catégorie créée pour le moment. Utilisez le formulaire pour en ajouter.
+                Aucune catégorie disponible. Cliquez sur « Restaurer les catégories par défaut » pour initialiser les catégories stratégiques.
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal for Delete (avoids window.confirm in iframe) */}
+      {categoryToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">Confirmer la suppression</h3>
+              </div>
+              <button
+                onClick={() => setCategoryToDelete(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Êtes-vous sûr de vouloir supprimer définitivement la catégorie « <span className="font-bold text-slate-900 dark:text-white">{categoryToDelete.name}</span> » ?
+              {categoryToDelete.count > 0 && (
+                <span className="block mt-2 font-semibold text-rose-500">
+                  Attention : {categoryToDelete.count} point(s) partenaire(s) y sont rattachés.
+                </span>
+              )}
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCategoryToDelete(null)}
+                disabled={isDeleting}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? 'Suppression...' : 'Supprimer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
