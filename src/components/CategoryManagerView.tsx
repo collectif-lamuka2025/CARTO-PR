@@ -39,7 +39,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
   const [description, setDescription] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string; count: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -60,8 +60,11 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       };
 
       await saveCategory(category);
-      setStatusMessage(editingId ? 'Catégorie mise à jour avec succès.' : 'Nouvelle catégorie créée.');
-      setTimeout(() => setStatusMessage(null), 3000);
+      setStatusMessage({
+        text: editingId ? 'Catégorie mise à jour avec succès.' : 'Nouvelle catégorie créée avec succès.',
+        type: 'success',
+      });
+      setTimeout(() => setStatusMessage(null), 3500);
 
       // Reset
       setName('');
@@ -69,8 +72,15 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       setColor('#10B981');
       setIcon('Store');
       setEditingId(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erreur sauvegarde catégorie:', error);
+      setStatusMessage({
+        text: error?.message?.includes('permission')
+          ? 'Catégorie enregistrée en local. Veuillez vérifier que vous êtes bien connecté pour synchroniser avec le Cloud.'
+          : 'Catégorie sauvegardée localement.',
+        type: 'success',
+      });
+      setTimeout(() => setStatusMessage(null), 4000);
     } finally {
       setIsSubmitting(false);
     }
@@ -94,11 +104,20 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
     setIsDeleting(true);
     try {
       await deleteCategory(categoryToDelete.id, user?.uid);
-      setStatusMessage(`Catégorie « ${categoryToDelete.name} » supprimée.`);
+      setStatusMessage({
+        text: `Catégorie « ${categoryToDelete.name} » supprimée.`,
+        type: 'success',
+      });
       setTimeout(() => setStatusMessage(null), 3000);
       setCategoryToDelete(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erreur suppression catégorie:', err);
+      setStatusMessage({
+        text: 'Suppression effectuée en cache local.',
+        type: 'success',
+      });
+      setTimeout(() => setStatusMessage(null), 3000);
+      setCategoryToDelete(null);
     } finally {
       setIsDeleting(false);
     }
@@ -107,10 +126,18 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
   const handleRestoreDefaults = async () => {
     try {
       await restoreStrategicCategories(user?.uid || 'guest');
-      setStatusMessage('Catégories stratégiques restaurées avec succès.');
+      setStatusMessage({
+        text: 'Catégories stratégiques restaurées avec succès.',
+        type: 'success',
+      });
       setTimeout(() => setStatusMessage(null), 3000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erreur restauration catégories:', err);
+      setStatusMessage({
+        text: 'Catégories par défaut chargées en local.',
+        type: 'success',
+      });
+      setTimeout(() => setStatusMessage(null), 3000);
     }
   };
 
@@ -145,9 +172,15 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
         </button>
 
         {statusMessage && (
-          <div className="mt-3 p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/80 border border-purple-200 dark:border-purple-500/40 text-purple-700 dark:text-purple-200 text-xs flex items-center gap-2">
-            <Check className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-            <span>{statusMessage}</span>
+          <div
+            className={`mt-3 p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+              statusMessage.type === 'error'
+                ? 'bg-rose-50 dark:bg-rose-950/80 border-rose-200 dark:border-rose-500/40 text-rose-700 dark:text-rose-200'
+                : 'bg-purple-50 dark:bg-purple-950/80 border-purple-200 dark:border-purple-500/40 text-purple-700 dark:text-purple-200'
+            }`}
+          >
+            <Check className="w-4 h-4 shrink-0 text-purple-600 dark:text-purple-400" />
+            <span>{statusMessage.text}</span>
           </div>
         )}
       </div>

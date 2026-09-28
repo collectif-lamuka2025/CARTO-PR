@@ -36,9 +36,9 @@ service cloud.firestore {
         data.agentId == request.auth.uid;
     }
 
-    // Categories Collection: Accessible to signed-in field agents, can manage and delete
+    // Categories Collection: Public read for map pins and UI, manage for signed-in field agents
     match /categories/{categoryId} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow create, update, delete: if isSignedIn() && isValidId(categoryId);
     }
 
