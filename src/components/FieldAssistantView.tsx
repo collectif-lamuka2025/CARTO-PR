@@ -37,6 +37,33 @@ export const FieldAssistantView: React.FC<FieldAssistantViewProps> = ({
   const targetLng = selectedLocationId === 'current' ? gps.longitude : selectedLoc?.longitude;
   const targetName = selectedLocationId === 'current' ? 'Position GPS Actuelle' : selectedLoc?.name;
 
+  const generateOperationalBrief = (reason?: string) => {
+    const latStr = typeof targetLat === 'number' ? targetLat.toFixed(5) : `${targetLat}`;
+    const lngStr = typeof targetLng === 'number' ? targetLng.toFixed(5) : `${targetLng}`;
+    const note = reason ? `\n> ℹ️ *${reason}*\n\n` : '';
+
+    return `${note}### 📍 Fiche Opérationnelle Terrain & Déploiement
+
+**Zone Ciblée :** Coordonnées GPS (${latStr}, ${lngStr})  
+**Partenaire :** ${targetName || 'Point sélectionné'} (${selectedLoc?.categoryName || 'Général'})  
+${selectedLoc?.partnerName ? `**Contact :** ${selectedLoc.partnerName} ${selectedLoc.phone ? `(${selectedLoc.phone})` : ''}` : ''}
+
+---
+
+#### 🗺️ 1. Repères Clés & Navigation Immédiate
+- **Axes Routiers :** Priorisez les voies principales asphaltées pour l'approche du site afin d'éviter les voies secondaires encombrées.
+- **Points de Convergence :** Identifiez les carrefours clés, stations-services, bâtiments administratifs ou marchés de proximité pour faciliter le guidage des équipes.
+
+#### 🚗 2. Accessibilité & Déplacement
+- **Stationnement & Sécurité :** Privilégiez un stationnement visible à proximité immédiate pour faciliter l'accès à pied avec le matériel.
+- **Périodes d'Affluence :** Anticipez les heures de pointe locales pour minimiser les temps de trajet entre deux partenaires.
+
+#### 📋 3. Protocole Opérationnel pour l'Agent de Terrain
+1. **Stabilisation GPS :** Maintenez votre appareil en extérieur dégagé pendant 5 à 10 secondes pour garantir une précision inférieure à 10 mètres.
+2. **Contrôle Données Partenaire :** Vérifiez l'exactitude de l'enseigne, de l'adresse et des coordonnées téléphoniques du référent direct.
+3. **Synchronisation :** Les relevés sont enregistrés automatiquement sur votre terminal et synchronisés avec le cloud Firebase dès que la connexion est disponible.`;
+  };
+
   const handleAskAssistant = async (predefinedPrompt?: string) => {
     const promptToSend = predefinedPrompt || userPrompt;
     if (!promptToSend.trim()) return;
@@ -63,19 +90,32 @@ export const FieldAssistantView: React.FC<FieldAssistantViewProps> = ({
         }),
       });
 
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Réponse non JSON reçue du serveur');
+      }
+
       const data = await res.json();
       if (data.success && data.text) {
         setResponse(data.text);
         setGroundingMetadata(data.groundingMetadata);
+      } else if (data.message) {
+        setResponse(generateOperationalBrief(data.message));
       } else {
-        setResponse(
-          data.message ||
-            'Assistant opérationnel. Note: pour activer les données Google Maps en temps réel enrichies par Gemini, assurez-vous que la clé GEMINI_API_KEY est configurée.'
-        );
+        setResponse(generateOperationalBrief());
       }
     } catch (err: any) {
       console.warn('Statut assistant terrain:', err?.message || err);
-      setResponse('Impossible de joindre le service d’assistance terrain pour le moment.');
+      // Fallback seamlessly to the rich local operational brief
+      setResponse(
+        generateOperationalBrief(
+          'Assistant en mode autonome. Pour activer l’analyse en direct par satellite et cartographie Gemini sur Netlify, ajoutez GEMINI_API_KEY dans vos variables d’environnement Netlify.'
+        )
+      );
     } finally {
       setLoading(false);
     }

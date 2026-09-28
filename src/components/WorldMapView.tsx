@@ -344,7 +344,7 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
       <div className="relative flex-1 w-full h-full">
         <Map
           id="carto_partner_world_map"
-          mapId="carto_partner_world_map_id"
+          mapId="DEMO_MAP_ID"
           defaultCenter={defaultCenter}
           defaultZoom={locations.length > 0 ? 5 : 3}
           mapTypeId={mapTypeId}
