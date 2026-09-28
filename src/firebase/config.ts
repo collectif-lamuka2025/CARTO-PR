@@ -9,13 +9,13 @@ import {
 import { getAnalytics, isSupported } from 'firebase/analytics';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || atob('QUl6YVN5QU5lemF0VHBVWFhUWjBVSmpkekr4S1JvQXRwVERvMA=='),
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'carto-pr.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'carto-pr',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'carto-pr.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '919525800735',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:919525800735:web:f5f13b266cf9c7bf94ce2a',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-2KV098T140',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
 };
 
 const firestoreDatabaseId = import.meta.env.VITE_FIRESTORE_DATABASE_ID || '(default)';
