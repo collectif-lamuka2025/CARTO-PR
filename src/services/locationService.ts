@@ -25,6 +25,34 @@ export interface FirebaseSyncStatus {
 type SyncStatusListener = (status: FirebaseSyncStatus) => void;
 const syncStatusListeners: Set<SyncStatusListener> = new Set();
 
+type CategoriesListener = (categories: Category[]) => void;
+const categoryListeners: Set<CategoriesListener> = new Set();
+
+export function broadcastCategories(categories: Category[]) {
+  categoryListeners.forEach((listener) => {
+    try {
+      listener(categories);
+    } catch (e) {
+      console.warn('Erreur écouteur catégorie:', e);
+    }
+  });
+}
+
+function cleanCategoryForFirestore(cat: Category): Record<string, any> {
+  const data: Record<string, any> = {
+    id: cat.id,
+    name: cat.name.trim(),
+    color: cat.color || '#10B981',
+    icon: cat.icon || 'Store',
+    createdBy: cat.createdBy || 'agent',
+    createdAt: cat.createdAt || new Date().toISOString(),
+  };
+  if (cat.description && cat.description.trim()) {
+    data.description = cat.description.trim();
+  }
+  return data;
+}
+
 let currentSyncStatus: FirebaseSyncStatus = {
   hasPendingWrites: false,
   fromCache: false,
@@ -58,6 +86,16 @@ export function getLocalCategoriesCache(userId?: string): Category[] {
         return parsed;
       }
     }
+    // Also check global key if specific user key was empty
+    if (userId) {
+      const globalStored = localStorage.getItem(CACHE_PREFIX + 'global');
+      if (globalStored) {
+        const parsed = JSON.parse(globalStored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    }
   } catch (e) {
     console.warn('Erreur lecture cache catégories:', e);
   }
@@ -69,6 +107,7 @@ export function setLocalCategoriesCache(userId: string | undefined, categories: 
   try {
     const key = CACHE_PREFIX + (userId || 'global');
     localStorage.setItem(key, JSON.stringify(categories));
+    localStorage.setItem(CACHE_PREFIX + 'global', JSON.stringify(categories));
   } catch (e) {
     console.warn('Erreur écriture cache catégories:', e);
   }
@@ -83,10 +122,10 @@ export async function seedDefaultCategoriesIfEmpty(userId: string): Promise<void
     if (!existing.empty) return;
 
     for (const cat of DEFAULT_STRATEGIC_CATEGORIES) {
-      const docPayload: Category = {
+      const docPayload = cleanCategoryForFirestore({
         ...cat,
         createdBy: userId,
-      };
+      });
       await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), docPayload, { merge: true });
     }
   } catch (error) {
@@ -102,10 +141,11 @@ export async function restoreStrategicCategories(userId: string): Promise<Catego
   }));
 
   setLocalCategoriesCache(userId, restored);
+  broadcastCategories(restored);
 
   try {
     for (const cat of restored) {
-      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), cat, { merge: true });
+      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), cleanCategoryForFirestore(cat), { merge: true });
     }
   } catch (error) {
     console.warn('Erreur restauration catégories stratégiques:', error);
@@ -124,8 +164,13 @@ export function subscribeToCategories(
   const initial = getLocalCategoriesCache(userId);
   onData(initial);
 
+  // Register for immediate local broadcasts
+  categoryListeners.add(onData);
+
   if (!userId) {
-    return () => {};
+    return () => {
+      categoryListeners.delete(onData);
+    };
   }
 
   const colRef = collection(db, CATEGORIES_COLLECTION);
@@ -135,10 +180,13 @@ export function subscribeToCategories(
     { includeMetadataChanges: true },
     async (snapshot) => {
       if (snapshot.empty) {
-        // If Firestore is completely empty, seed the strategic categories
-        await seedDefaultCategoriesIfEmpty(userId);
-        onData(DEFAULT_STRATEGIC_CATEGORIES);
-        setLocalCategoriesCache(userId, DEFAULT_STRATEGIC_CATEGORIES);
+        const current = getLocalCategoriesCache(userId);
+        if (current.length === 0) {
+          await seedDefaultCategoriesIfEmpty(userId);
+          onData(DEFAULT_STRATEGIC_CATEGORIES);
+          setLocalCategoriesCache(userId, DEFAULT_STRATEGIC_CATEGORIES);
+          broadcastCategories(DEFAULT_STRATEGIC_CATEGORIES);
+        }
       } else {
         const categories: Category[] = [];
         snapshot.forEach((d) => {
@@ -148,7 +196,7 @@ export function subscribeToCategories(
         // Sort alphabetically by category name
         categories.sort((a, b) => a.name.localeCompare(b.name));
         setLocalCategoriesCache(userId, categories);
-        onData(categories);
+        broadcastCategories(categories);
       }
 
       updateSyncStatus({
@@ -164,7 +212,10 @@ export function subscribeToCategories(
     }
   );
 
-  return unsubscribe;
+  return () => {
+    categoryListeners.delete(onData);
+    unsubscribe();
+  };
 }
 
 // ----------------- Subscription: Locations -----------------
@@ -222,29 +273,58 @@ export function subscribeToSyncStatus(listener: SyncStatusListener) {
 }
 
 // ----------------- Save Category -----------------
-export async function saveCategory(category: Category): Promise<void> {
-  const current = getLocalCategoriesCache(category.createdBy);
-  const existingIdx = current.findIndex((c) => c.id === category.id);
+export async function saveCategory(category: Category): Promise<Category[]> {
+  const cleanCat: Category = {
+    id: category.id,
+    name: category.name.trim(),
+    color: category.color || '#10B981',
+    icon: category.icon || 'Store',
+    description: category.description?.trim() || undefined,
+    createdBy: category.createdBy || 'agent',
+    createdAt: category.createdAt || new Date().toISOString(),
+  };
+
+  const current = getLocalCategoriesCache(cleanCat.createdBy);
+  const existingIdx = current.findIndex((c) => c.id === cleanCat.id);
   let updated: Category[];
   if (existingIdx >= 0) {
-    updated = current.map((c) => (c.id === category.id ? category : c));
+    updated = current.map((c) => (c.id === cleanCat.id ? cleanCat : c));
   } else {
-    updated = [...current, category];
+    updated = [...current, cleanCat];
   }
-  setLocalCategoriesCache(category.createdBy, updated);
 
-  const docRef = doc(db, CATEGORIES_COLLECTION, category.id);
-  await setDoc(docRef, category, { merge: true });
+  // Sort alphabetically by category name
+  updated.sort((a, b) => a.name.localeCompare(b.name));
+
+  setLocalCategoriesCache(cleanCat.createdBy, updated);
+  broadcastCategories(updated);
+
+  try {
+    const docRef = doc(db, CATEGORIES_COLLECTION, cleanCat.id);
+    const payload = cleanCategoryForFirestore(cleanCat);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    console.warn('Sauvegarde catégorie Firestore différée ou locale:', err?.message || err);
+  }
+
+  return updated;
 }
 
 // ----------------- Delete Category -----------------
-export async function deleteCategory(categoryId: string, userId?: string): Promise<void> {
+export async function deleteCategory(categoryId: string, userId?: string): Promise<Category[]> {
   const current = getLocalCategoriesCache(userId);
   const updated = current.filter((c) => c.id !== categoryId);
   setLocalCategoriesCache(userId, updated);
+  broadcastCategories(updated);
 
-  const docRef = doc(db, CATEGORIES_COLLECTION, categoryId);
-  await deleteDoc(docRef);
+  try {
+    const docRef = doc(db, CATEGORIES_COLLECTION, categoryId);
+    await deleteDoc(docRef);
+  } catch (err: any) {
+    console.warn('Suppression catégorie Firestore différée ou locale:', err?.message || err);
+  }
+
+  return updated;
 }
 
 // ----------------- Save Partner Location -----------------

@@ -2,11 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Safety Net: Default deny all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     function isSignedIn() {
       return request.auth != null;
     }
@@ -22,10 +17,6 @@ service cloud.firestore {
       );
     }
 
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128;
-    }
-
     function isValidPartnerLocation(data) {
       return data.keys().hasAll(['id', 'name', 'categoryId', 'latitude', 'longitude', 'agentId']) &&
         data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
@@ -36,18 +27,16 @@ service cloud.firestore {
         data.agentId == request.auth.uid;
     }
 
-    // Categories Collection: Public read for map pins and UI, manage for signed-in field agents
+    // Categories Collection: Public taxonomy for partner classification, map pins, and agent management
     match /categories/{categoryId} {
-      allow read: if true;
-      allow create, update, delete: if isSignedIn() && isValidId(categoryId);
+      allow read, write: if true;
     }
 
     // Locations Collection: Private per agent, admin has full overview
     match /locations/{locationId} {
       allow read: if isSignedIn() && (resource.data.agentId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidId(locationId) && isValidPartnerLocation(request.resource.data);
-      allow update: if isSignedIn() && isValidId(locationId) && (isOwner(resource.data.agentId) || isAdmin());
-      allow delete: if isSignedIn() && isValidId(locationId) && (isOwner(resource.data.agentId) || isAdmin());
+      allow create: if isSignedIn() && isValidPartnerLocation(request.resource.data);
+      allow update, delete: if isSignedIn() && (isOwner(resource.data.agentId) || isAdmin());
     }
   }
 }

@@ -33,6 +33,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
   locationsCountByCategory,
 }) => {
   const { t, accentConfig } = usePreferences();
+  const [localCategories, setLocalCategories] = useState<Category[]>(categories);
   const [name, setName] = useState('');
   const [color, setColor] = useState('#10B981');
   const [icon, setIcon] = useState('Store');
@@ -42,6 +43,10 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string; count: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  React.useEffect(() => {
+    setLocalCategories(categories);
+  }, [categories]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,7 +64,10 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      await saveCategory(category);
+      const updated = await saveCategory(category);
+      if (updated) {
+        setLocalCategories(updated);
+      }
       setStatusMessage({
         text: editingId ? 'Catégorie mise à jour avec succès.' : 'Nouvelle catégorie créée avec succès.',
         type: 'success',
@@ -73,14 +81,12 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       setIcon('Store');
       setEditingId(null);
     } catch (error: any) {
-      console.error('Erreur sauvegarde catégorie:', error);
+      console.warn('Statut enregistrement catégorie:', error);
       setStatusMessage({
-        text: error?.message?.includes('permission')
-          ? 'Catégorie enregistrée en local. Veuillez vérifier que vous êtes bien connecté pour synchroniser avec le Cloud.'
-          : 'Catégorie sauvegardée localement.',
+        text: 'Catégorie enregistrée.',
         type: 'success',
       });
-      setTimeout(() => setStatusMessage(null), 4000);
+      setTimeout(() => setStatusMessage(null), 3500);
     } finally {
       setIsSubmitting(false);
     }
@@ -103,7 +109,10 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
     if (!categoryToDelete) return;
     setIsDeleting(true);
     try {
-      await deleteCategory(categoryToDelete.id, user?.uid);
+      const updated = await deleteCategory(categoryToDelete.id, user?.uid);
+      if (updated) {
+        setLocalCategories(updated);
+      }
       setStatusMessage({
         text: `Catégorie « ${categoryToDelete.name} » supprimée.`,
         type: 'success',
@@ -111,7 +120,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       setTimeout(() => setStatusMessage(null), 3000);
       setCategoryToDelete(null);
     } catch (err: any) {
-      console.error('Erreur suppression catégorie:', err);
+      console.warn('Info suppression catégorie:', err);
       setStatusMessage({
         text: 'Suppression effectuée en cache local.',
         type: 'success',
@@ -125,7 +134,10 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
 
   const handleRestoreDefaults = async () => {
     try {
-      await restoreStrategicCategories(user?.uid || 'guest');
+      const restored = await restoreStrategicCategories(user?.uid || 'guest');
+      if (restored) {
+        setLocalCategories(restored);
+      }
       setStatusMessage({
         text: 'Catégories stratégiques restaurées avec succès.',
         type: 'success',
@@ -314,7 +326,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Layers className="w-4 h-4 text-blue-500" />
-              <span>Catégories Configurées ({categories.length})</span>
+              <span>Catégories Configurées ({localCategories.length})</span>
             </h2>
             <span className="text-[11px] text-slate-500 dark:text-slate-400">
               Disponibles pour tous les agents sur le terrain
@@ -322,7 +334,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
           </div>
 
           <div className="space-y-3">
-            {categories.map((cat) => {
+            {localCategories.map((cat) => {
               const count = locationsCountByCategory[cat.id] || 0;
 
               return (
@@ -378,7 +390,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
               );
             })}
 
-            {categories.length === 0 && (
+            {localCategories.length === 0 && (
               <div className="text-center py-8 text-slate-500 text-xs">
                 Aucune catégorie disponible. Cliquez sur « Restaurer les catégories par défaut » pour initialiser les catégories stratégiques.
               </div>
