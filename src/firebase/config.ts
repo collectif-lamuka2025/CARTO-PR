@@ -6,25 +6,34 @@ import {
   persistentMultipleTabManager,
   setLogLevel,
 } from 'firebase/firestore';
+import { getAnalytics, isSupported } from 'firebase/analytics';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyAM-p-5xjkv_Ci014DDH4iCmg1Pix6486Y',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'deft-vim-9thv3.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'deft-vim-9thv3',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'deft-vim-9thv3.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '309862839008',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:309862839008:web:e3973cd7312cb664f75685',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyANEzatTp-UXXTjW0UjfJz8KIroAtpDTo0',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'carto-pr.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'carto-pr',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'carto-pr.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '919525800735',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:919525800735:web:f5f13b266cf9c7bf94ce2a',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-2KV098T140',
 };
 
-const firestoreDatabaseId = import.meta.env.VITE_FIRESTORE_DATABASE_ID || 'ai-studio-daa60fbf-5873-40a6-83f5-99d6f3f184f3';
+const firestoreDatabaseId = import.meta.env.VITE_FIRESTORE_DATABASE_ID || '(default)';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
+if (typeof window !== 'undefined') {
+  isSupported().then((supported) => {
+    if (supported) {
+      getAnalytics(app);
+    }
+  }).catch(() => {});
+}
+
 // Silence internal Firestore offline/reconnection console warnings
 setLogLevel('silent');
 
-// CRITICAL: Must use firestoreDatabaseId
 // Enable Firestore native persistent cache for seamless offline writes & background auto-sync
 export const db = initializeFirestore(
   app,
@@ -35,6 +44,7 @@ export const db = initializeFirestore(
   },
   firestoreDatabaseId
 );
+
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -58,30 +68,31 @@ export interface FirestoreErrorInfo {
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
     tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map((provider) => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || [],
-    },
+export async function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): Promise<FirestoreErrorInfo> {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  const currentUser = auth.currentUser;
+  const authInfo = {
+    userId: currentUser?.uid,
+    email: currentUser?.email,
+    emailVerified: currentUser?.emailVerified,
+    isAnonymous: currentUser?.isAnonymous,
+    tenantId: currentUser?.tenantId,
+  };
+
+  const errorInfo: FirestoreErrorInfo = {
+    error: errMessage,
     operationType,
     path,
+    authInfo,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+
+  console.error('Firestore Error Details:', errorInfo);
+  return errorInfo;
 }
