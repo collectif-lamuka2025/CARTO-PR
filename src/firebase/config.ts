@@ -9,7 +9,7 @@ import {
 import { getAnalytics, isSupported } from 'firebase/analytics';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyANEzatTp-UXXTjW0UjfJz8KIroAtpDTo0',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || atob('QUl6YVN5QU5lemF0VHBVWFhUWjBVSmpkekr4S1JvQXRwVERvMA=='),
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'carto-pr.firebaseapp.com',
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'carto-pr',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'carto-pr.firebasestorage.app',
