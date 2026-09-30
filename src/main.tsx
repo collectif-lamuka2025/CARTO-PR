@@ -1,3 +1,5 @@
+import './utils/viteHmrSilencer';
+import './utils/maplibreSetup';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
@@ -10,7 +12,7 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
       registerSW({ immediate: true });
     })
     .catch((err) => {
-      console.warn('PWA service worker registration skipped:', err);
+      console.warn('PWA service worker registration notice:', err);
     });
 }
 

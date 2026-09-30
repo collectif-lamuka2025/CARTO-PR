@@ -1,6 +1,119 @@
 <!doctype html>
 <html lang="fr">
   <head>
+    <script>
+      // AI Studio Runtime Constraint: HMR is disabled. Ignore WebSocket errors.
+      (function() {
+        try {
+          function isViteHmrError(arg) {
+            if (!arg) return false;
+            if (arg === '[vite]') return true;
+            try {
+              const str = typeof arg === 'string' ? arg : (arg?.message || arg?.stack || String(arg));
+              return (
+                str.includes('[vite]') ||
+                str.includes('vite-hmr') ||
+                str.includes('websocket') ||
+                str.includes('WebSocket') ||
+                str.includes('failed to connect to websocket')
+              );
+            } catch {
+              return false;
+            }
+          }
+
+          function shouldFilter(...args) {
+            for (let i = 0; i < args.length; i++) {
+              if (isViteHmrError(args[i])) return true;
+            }
+            return false;
+          }
+
+          const _origError = console.error;
+          console.error = function(...args) {
+            if (shouldFilter(...args)) return;
+            _origError.apply(console, args);
+          };
+
+          const _origWarn = console.warn;
+          console.warn = function(...args) {
+            if (shouldFilter(...args)) return;
+            _origWarn.apply(console, args);
+          };
+
+          window.addEventListener('error', function(e) {
+            if (shouldFilter(e?.message, e?.error, e?.filename)) {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+            }
+          }, true);
+
+          window.addEventListener('unhandledrejection', function(e) {
+            if (shouldFilter(e?.reason)) {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+            }
+          }, true);
+
+          // Safely mock WebSocket for 'vite-hmr' without throwing setter errors
+          if (typeof window !== 'undefined' && window.WebSocket) {
+            const OrigWebSocket = window.WebSocket;
+            function ViteSilentWebSocket(url, protocols) {
+              const protoStr = Array.isArray(protocols) ? protocols.join(' ') : (protocols || '');
+              const urlStr = String(url);
+              const isVite =
+                protoStr.includes('vite') ||
+                urlStr.includes('vite-hmr') ||
+                urlStr.includes('token=') ||
+                urlStr.includes('vite-ping');
+
+              if (isVite) {
+                const target = new EventTarget();
+                target.binaryType = 'blob';
+                target.readyState = 1; // WebSocket.OPEN
+                target.url = urlStr;
+                target.protocol = Array.isArray(protocols) ? protocols[0] : (protocols || '');
+                target.extensions = '';
+                target.bufferedAmount = 0;
+                target.send = function() {};
+                target.close = function() {
+                  target.readyState = 3; // CLOSED
+                  if (typeof target.onclose === 'function') target.onclose(new Event('close'));
+                  target.dispatchEvent(new Event('close'));
+                };
+                target.onopen = null;
+                target.onclose = null;
+                target.onerror = null;
+                target.onmessage = null;
+
+                setTimeout(function() {
+                  if (typeof target.onopen === 'function') target.onopen(new Event('open'));
+                  target.dispatchEvent(new Event('open'));
+                }, 5);
+
+                return target;
+              }
+              return new OrigWebSocket(url, protocols);
+            }
+            ViteSilentWebSocket.prototype = OrigWebSocket.prototype;
+            ViteSilentWebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+            ViteSilentWebSocket.OPEN = OrigWebSocket.OPEN;
+            ViteSilentWebSocket.CLOSING = OrigWebSocket.CLOSING;
+            ViteSilentWebSocket.CLOSED = OrigWebSocket.CLOSED;
+
+            try {
+              Object.defineProperty(window, 'WebSocket', {
+                value: ViteSilentWebSocket,
+                configurable: true,
+                writable: true,
+              });
+            } catch (_) {
+              // Silently ignore if environment restricts WebSocket redefinition
+            }
+          }
+        } catch (_) {}
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>CARTO-PR - Cartographie de Terrain</title>

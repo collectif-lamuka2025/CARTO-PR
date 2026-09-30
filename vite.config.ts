@@ -53,6 +53,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           navigateFallback: '/index.html',
           runtimeCaching: [
@@ -87,14 +88,14 @@ export default defineConfig(() => {
               },
             },
             {
-              // Google Maps JS API scripts & tile images
-              urlPattern: /^https:\/\/(maps\.googleapis\.com|maps\.gstatic\.com)\/.*/i,
-              handler: 'StaleWhileRevalidate',
+              // MapLibre Map Raster & Vector Tiles (OpenStreetMap, ArcGIS World Imagery & Boundaries, OpenTopoMap, OSRM Routes)
+              urlPattern: /^https:\/\/(?:[a-d]\.)?(?:tile\.openstreetmap\.org|tile\.opentopomap\.org)\/.*|^https:\/\/(?:server|services)\.arcgisonline\.com\/ArcGIS\/rest\/services\/.*|^https:\/\/router\.project-osrm\.org\/route\/v1\/.*$/i,
+              handler: 'CacheFirst',
               options: {
-                cacheName: 'google-maps-cache',
+                cacheName: 'map-tiles-cache',
                 expiration: {
-                  maxEntries: 100,
-                  maxAgeSeconds: 60 * 60 * 24 * 30, // 30 jours
+                  maxEntries: 2500, // Caches thousands of map tiles for smooth offline navigation
+                  maxAgeSeconds: 60 * 60 * 24 * 60, // 60 days
                 },
                 cacheableResponse: {
                   statuses: [0, 200],

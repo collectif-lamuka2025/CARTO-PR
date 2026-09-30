@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User } from 'firebase/auth';
-import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { initMapLibreWorker } from '../utils/maplibreSetup';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { Category, PartnerLocation } from '../types';
 import { savePartnerLocation, saveCategory } from '../services/locationService';
 import { usePreferences } from '../context/PreferencesContext';
+import { getMapLibreStyle } from '../utils/mapStyles';
 import {
   Navigation,
   Compass,
@@ -33,40 +36,6 @@ interface CaptureLocationViewProps {
   onNavigateToMap: () => void;
 }
 
-// Controller to pan map ONLY once on initial detection or when user clicks Recentrer
-function RecenterController({
-  coords,
-  trigger,
-}: {
-  coords: { lat: number; lng: number } | null;
-  trigger: number;
-}) {
-  const map = useMap();
-  const hasInitiallyCentered = React.useRef(false);
-  const prevTrigger = React.useRef(trigger);
-
-  // 1. One-time initial centering when position is first acquired
-  React.useEffect(() => {
-    if (!map || !coords) return;
-    if (!hasInitiallyCentered.current) {
-      hasInitiallyCentered.current = true;
-      map.setCenter(coords);
-      map.setZoom(16);
-    }
-  }, [map, coords?.lat, coords?.lng]);
-
-  // 2. Only pan when user explicitly clicks the "Recentrer" button
-  React.useEffect(() => {
-    if (!map || !coords) return;
-    if (trigger !== prevTrigger.current) {
-      prevTrigger.current = trigger;
-      map.panTo(coords);
-    }
-  }, [map, trigger, coords]);
-
-  return null;
-}
-
 export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
   user,
   categories,
@@ -79,6 +48,11 @@ export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
   const [recenterTrigger, setRecentertrigger] = useState(0);
   const [displayMode, setDisplayMode] = useState<'map' | 'radar'>('map');
   const [telemetryCollapsed, setTelemetryCollapsed] = useState(false);
+
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const hasInitiallyCentered = useRef(false);
 
   // Form State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -116,6 +90,97 @@ export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
   // Determine active coordinates
   const activeLat = pinnedCoords?.lat ?? gps.latitude;
   const activeLng = pinnedCoords?.lng ?? gps.longitude;
+
+  // Initialize and update MapLibre Map
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    if (!mapRef.current) {
+      initMapLibreWorker();
+      const defaultLng = activeLng ?? 15.312;
+      const defaultLat = activeLat ?? -4.325;
+
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: getMapLibreStyle('roadmap'),
+        center: [defaultLng, defaultLat],
+        zoom: 16,
+      });
+
+      // Gracefully absorb transient tile fetch or offline network errors
+      map.on('error', (e) => {
+        const msg = e?.error?.message || '';
+        if (msg.includes('Failed to fetch') || msg.includes('AJAXError') || msg.includes('404')) {
+          return;
+        }
+        console.warn('Notice carte capture:', msg);
+      });
+
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+      mapRef.current = map;
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  // Update marker position and initial center
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || activeLat === null || activeLng === null) return;
+
+    // Create or update marker
+    if (!markerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'capture-beacon select-none pointer-events-none';
+      el.innerHTML = `
+        <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+          <span style="position: absolute; width: 44px; height: 44px; border-radius: 9999px; background-color: rgba(16, 185, 129, 0.35); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;"></span>
+          <div style="position: relative; width: 24px; height: 24px; border-radius: 9999px; background-color: #10b981; border: 2.5px solid #ffffff; box-shadow: 0 0 10px #10b981, 0 4px 6px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center;">
+            <div style="width: 8px; height: 8px; border-radius: 9999px; background-color: #ffffff;"></div>
+          </div>
+        </div>
+      `;
+
+      markerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([activeLng, activeLat])
+        .addTo(map);
+    } else {
+      markerRef.current.setLngLat([activeLng, activeLat]);
+    }
+
+    // Initial center on first fix
+    if (!hasInitiallyCentered.current) {
+      hasInitiallyCentered.current = true;
+      map.setCenter([activeLng, activeLat]);
+      map.setZoom(16);
+    }
+  }, [activeLat, activeLng]);
+
+  // Recenter trigger
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || activeLat === null || activeLng === null || recenterTrigger === 0) return;
+
+    map.flyTo({
+      center: [activeLng, activeLat],
+      zoom: 16,
+      essential: true,
+    });
+  }, [recenterTrigger, activeLat, activeLng]);
+
+  // Resize map when switching displayMode to map
+  useEffect(() => {
+    if (displayMode === 'map' && mapRef.current) {
+      setTimeout(() => {
+        mapRef.current?.resize();
+      }, 100);
+    }
+  }, [displayMode]);
 
   // Handle open registration modal
   const handleOpenRegisterModal = () => {
@@ -437,41 +502,25 @@ export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
 
         {/* Viewport: Map or Offline Radar */}
         <div className="h-[380px] sm:h-[450px] w-full relative bg-slate-950 flex items-center justify-center overflow-hidden">
-          {displayMode === 'map' ? (
-            <Map
-              id="capture_realtime_map"
-              mapId="capture_realtime_map_id"
-              defaultCenter={{
-                lat: activeLat ?? -4.325,
-                lng: activeLng ?? 15.312,
-              }}
-              defaultZoom={16}
-              gestureHandling="greedy"
-              disableDefaultUI={false}
-              className="w-full h-full"
-              internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-            >
-              {activeLat !== null && activeLng !== null && (
-                <>
-                  <RecenterController
-                    coords={{ lat: activeLat, lng: activeLng }}
-                    trigger={recenterTrigger}
-                  />
-                  <AdvancedMarker position={{ lat: activeLat, lng: activeLng }}>
-                    {/* Realtime Live Agent Beacon Marker */}
-                    <div className="relative flex items-center justify-center">
-                      <span className="absolute w-12 h-12 rounded-full bg-emerald-400/30 animate-ping pointer-events-none" />
-                      <span className="absolute w-8 h-8 rounded-full bg-emerald-500/50 blur-xs" />
-                      <div className="relative w-6 h-6 rounded-full bg-emerald-500 border-2 border-white shadow-lg flex items-center justify-center text-white">
-                        <div className="w-2 h-2 rounded-full bg-white" />
-                      </div>
-                    </div>
-                  </AdvancedMarker>
-                </>
-              )}
-            </Map>
-          ) : (
-            /* High-Tech Offline Radar Grid View */
+          {/* MapLibre Realtime Map */}
+          <div
+            ref={mapContainerRef}
+            className={`w-full h-full ${displayMode === 'map' ? 'block' : 'hidden'}`}
+          />
+
+          {/* User Requirement 4: Discrete Offline Indicator on Map */}
+          {displayMode === 'map' && !isOnline && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 animate-fade-in pointer-events-auto">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-amber-500/40 text-amber-300 text-xs font-semibold shadow-xl">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                <WifiOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Mode hors ligne — zones déjà visitées uniquement</span>
+              </div>
+            </div>
+          )}
+
+          {/* High-Tech Offline Radar Grid View */}
+          {displayMode === 'radar' && (
             <div className="w-full h-full relative flex items-center justify-center bg-radial from-slate-900 via-slate-950 to-black select-none p-4">
               {/* Concentric Radar Rings */}
               <div className="relative w-72 h-72 sm:w-96 sm:h-96 rounded-full border border-emerald-500/30 flex items-center justify-center shadow-2xl shadow-emerald-500/10">

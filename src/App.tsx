@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { APIProvider } from '@vis.gl/react-google-maps';
 import { auth } from './firebase/config';
 import {
   subscribeToCategories,
@@ -27,9 +26,6 @@ import { CategoryManagerView } from './components/CategoryManagerView';
 import { FieldAssistantView } from './components/FieldAssistantView';
 import { SettingsView } from './components/SettingsView';
 import { Globe2, Loader2 } from 'lucide-react';
-
-const GOOGLE_MAPS_API_KEY =
-  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 function AppContent() {
   const { accentConfig } = usePreferences();
@@ -204,9 +200,7 @@ function AppContent() {
 export default function App() {
   return (
     <PreferencesProvider>
-      <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'marker', 'geometry', 'routes']}>
-        <AppContent />
-      </APIProvider>
+      <AppContent />
     </PreferencesProvider>
   );
 }
