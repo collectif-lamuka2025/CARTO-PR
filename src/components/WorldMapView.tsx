@@ -30,7 +30,72 @@ import {
   SlidersHorizontal,
   WifiOff,
   Info,
+  EyeOff,
+  Trash2,
+  Crosshair,
+  Filter,
+  Check,
+  Plus,
 } from 'lucide-react';
+
+// Distance helper (Haversine formula in meters) to prevent GPS jitter re-calculations
+function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Integrated MapLibre Control for high-precision GPS positioning (pure icon-only, integrated alongside zoom controls)
+class LocateControl implements maplibregl.IControl {
+  private container: HTMLElement;
+  private btn: HTMLButtonElement;
+
+  constructor(onClick: () => void) {
+    this.container = document.createElement('div');
+    this.container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    this.btn = document.createElement('button');
+    this.btn.type = 'button';
+    this.btn.title = 'Me localiser avec précision (Vous êtes ici)';
+    this.btn.setAttribute('aria-label', 'Me localiser');
+    this.btn.className = 'maplibregl-ctrl-locate-btn';
+    this.btn.innerHTML = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;pointer-events:none;"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>`;
+
+    const handler = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+    };
+
+    this.btn.addEventListener('click', handler);
+    this.btn.addEventListener('touchend', handler);
+    this.container.appendChild(this.btn);
+  }
+
+  onAdd(): HTMLElement {
+    return this.container;
+  }
+
+  onRemove(): void {
+    this.container.parentNode?.removeChild(this.container);
+  }
+
+  setLoading(loading: boolean) {
+    if (loading) {
+      this.btn.style.animation = 'spin 1s linear infinite';
+      this.btn.style.color = '#06b6d4';
+    } else {
+      this.btn.style.animation = '';
+      this.btn.style.color = '';
+    }
+  }
+}
 
 interface WorldMapViewProps {
   locations: PartnerLocation[];
@@ -41,6 +106,7 @@ interface WorldMapViewProps {
   onClearRoute?: () => void;
   onSetRouteTarget?: (loc: PartnerLocation | null) => void;
   onSimulateGPS?: () => void;
+  onRefreshGPS?: () => void;
 }
 
 export const WorldMapView: React.FC<WorldMapViewProps> = ({
@@ -52,6 +118,7 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
   onClearRoute,
   onSetRouteTarget,
   onSimulateGPS,
+  onRefreshGPS,
 }) => {
   const { t, accentConfig } = usePreferences();
   const isOnline = useOnlineStatus();
@@ -68,18 +135,58 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
   const [mapTypeId, setMapTypeId] = useState<MapTypeMode>('roadmap');
   const [recenterTrigger, setRecenterTrigger] = useState(0);
 
+  // High-precision geolocation and user tracking state
+  const [isLocating, setIsLocating] = useState(false);
+  const [locateFeedback, setLocateFeedback] = useState<{ message: string; type: 'success' | 'warning' } | null>(null);
+  const [lastKnownUserPos, setLastKnownUserPos] = useState<{ lat: number; lng: number; accuracy?: number | null } | null>(null);
+
+  // Category filter dropdown state & refs
+  const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
+  const categoryMenuRef = useRef<HTMLDivElement>(null);
+  const handleLocateMeRef = useRef<() => void>(() => {});
+  const locateControlRef = useRef<LocateControl | null>(null);
+
+  // Close category dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (categoryMenuRef.current && !categoryMenuRef.current.contains(event.target as Node)) {
+        setIsCategoryMenuOpen(false);
+      }
+    };
+    if (isCategoryMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isCategoryMenuOpen]);
+
+  const activeCategory = useMemo(() => {
+    if (selectedCategoryId === 'all') return null;
+    return categories.find((c) => c.id === selectedCategoryId) || null;
+  }, [categories, selectedCategoryId]);
+
   // Active route state
   const [activeRouteTarget, setActiveRouteTarget] = useState<PartnerLocation | null>(
     routeTarget || null
   );
   const [travelMode, setTravelMode] = useState<'DRIVING' | 'WALKING' | 'BICYCLING'>('DRIVING');
   const [routeInfo, setRouteInfo] = useState<RouteCalculationResult | null>(null);
+  const [isRoutePanelCollapsed, setIsRoutePanelCollapsed] = useState(false);
+
+  // Tracking refs to prevent unwanted auto-recentering and GPS spam
+  const hasFittedRouteRef = useRef<boolean>(false);
+  const lastRouteTargetIdRef = useRef<string | null>(null);
+  const lastOriginRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastTravelModeRef = useRef<string | null>(null);
 
   // Sync routeTarget prop from parent
   useEffect(() => {
     if (routeTarget) {
       setActiveRouteTarget(routeTarget);
       setSelectedLocation(null);
+      hasFittedRouteRef.current = false;
+      setIsRoutePanelCollapsed(false);
     }
   }, [routeTarget]);
 
@@ -142,6 +249,7 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
       style: getMapLibreStyle(mapTypeId),
       center: defaultCenter,
       zoom: locations.length > 0 ? 5 : 3,
+      maxZoom: 20,
       attributionControl: { compact: true },
     });
 
@@ -153,6 +261,13 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
       }
       console.warn('Notice carte:', msg);
     });
+
+    // Add integrated high-precision locate control alongside Navigation zoom controls (+ / -)
+    const locateCtrl = new LocateControl(() => {
+      handleLocateMeRef.current?.();
+    });
+    map.addControl(locateCtrl, 'bottom-right');
+    locateControlRef.current = locateCtrl;
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
 
@@ -227,12 +342,133 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
     });
   }, [filteredLocations, selectedLocation?.id, activeRouteTarget?.id]);
 
+  // Keep lastKnownUserPos up to date whenever originCoords / gps change
+  useEffect(() => {
+    if (originCoords) {
+      setLastKnownUserPos({
+        lat: originCoords.lat,
+        lng: originCoords.lng,
+        accuracy: gps?.accuracy,
+      });
+    }
+  }, [originCoords, gps?.accuracy]);
+
+  // High-precision locate me handler
+  const handleLocateMe = () => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    setIsLocating(true);
+    setLocateFeedback(null);
+
+    // Call app-wide GPS refresh
+    onRefreshGPS?.();
+
+    // 1. Instant centering if position is already known in state/GPS
+    const knownLat = originCoords?.lat ?? lastKnownUserPos?.lat ?? gps?.latitude ?? null;
+    const knownLng = originCoords?.lng ?? lastKnownUserPos?.lng ?? gps?.longitude ?? null;
+    const knownAcc = gps?.accuracy ?? lastKnownUserPos?.accuracy ?? null;
+
+    if (knownLat !== null && knownLng !== null) {
+      map.flyTo({
+        center: [knownLng, knownLat],
+        zoom: 17.5,
+        speed: 1.4,
+        curve: 1.2,
+        essential: true,
+      });
+
+      if (userMarkerRef.current) {
+        userMarkerRef.current.setLngLat([knownLng, knownLat]);
+      }
+
+      setLocateFeedback({
+        message: `Position localisée avec précision (±${knownAcc ? `${knownAcc} m` : 'Optimale'}) — Vous êtes ici`,
+        type: 'success',
+      });
+      setTimeout(() => setLocateFeedback(null), 4000);
+    }
+
+    // 2. Request fresh satellite lock via navigator.geolocation
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const accuracy = Math.round(pos.coords.accuracy * 10) / 10;
+
+          setLastKnownUserPos({ lat, lng, accuracy });
+
+          map.flyTo({
+            center: [lng, lat],
+            zoom: 17.5,
+            speed: 1.4,
+            curve: 1.2,
+            essential: true,
+          });
+
+          if (userMarkerRef.current) {
+            userMarkerRef.current.setLngLat([lng, lat]);
+          }
+
+          setIsLocating(false);
+          setLocateFeedback({
+            message: `Position actualisée avec haute précision (±${accuracy} m) — Vous êtes ici`,
+            type: 'success',
+          });
+          setTimeout(() => setLocateFeedback(null), 4000);
+        },
+        (err) => {
+          console.warn('Erreur localisation GPS:', err);
+          setIsLocating(false);
+
+          if (knownLat !== null && knownLng !== null) {
+            // Already centered on known position
+            return;
+          }
+
+          if (onSimulateGPS) {
+            onSimulateGPS();
+            setLocateFeedback({
+              message: 'Position de test activée — Vous êtes ici',
+              type: 'warning',
+            });
+            setTimeout(() => setLocateFeedback(null), 4500);
+          } else {
+            setLocateFeedback({
+              message: 'Veuillez autoriser la géolocalisation dans les paramètres de votre navigateur.',
+              type: 'warning',
+            });
+            setTimeout(() => setLocateFeedback(null), 5000);
+          }
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    } else {
+      setIsLocating(false);
+      if (knownLat === null && onSimulateGPS) {
+        onSimulateGPS();
+      }
+    }
+  };
+
+  // Keep ref up to date so LocateControl always calls the latest handleLocateMe
+  handleLocateMeRef.current = handleLocateMe;
+
+  useEffect(() => {
+    locateControlRef.current?.setLoading(isLocating);
+  }, [isLocating]);
+
   // 4. Render User Live GPS Marker Beacon
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    if (!originCoords) {
+    const effectiveCoords =
+      originCoords ||
+      (lastKnownUserPos ? { lat: lastKnownUserPos.lat, lng: lastKnownUserPos.lng } : null);
+
+    if (!effectiveCoords) {
       if (userMarkerRef.current) {
         userMarkerRef.current.remove();
         userMarkerRef.current = null;
@@ -243,25 +479,26 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
     if (!userMarkerRef.current) {
       const el = document.createElement('div');
       el.className = 'carto-user-beacon select-none pointer-events-none';
+      el.style.zIndex = '999';
       el.innerHTML = `
-        <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
-          <span style="position: absolute; width: 44px; height: 44px; border-radius: 9999px; background-color: rgba(6, 182, 212, 0.35); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;"></span>
-          <div style="position: relative; width: 24px; height: 24px; border-radius: 9999px; background: linear-gradient(135deg, #06b6d4, #2563eb); border: 2.5px solid #ffffff; box-shadow: 0 0 12px #06b6d4, 0 4px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center;">
-            <div style="width: 8px; height: 8px; border-radius: 9999px; background-color: #ffffff;"></div>
+        <div style="position: relative; display: flex; flex-direction: column; align-items: center; filter: drop-shadow(0 4px 12px rgba(6, 182, 212, 0.6));">
+          <span style="position: absolute; width: 48px; height: 48px; border-radius: 9999px; background-color: rgba(6, 182, 212, 0.4); animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;"></span>
+          <div style="position: relative; width: 26px; height: 26px; border-radius: 9999px; background: linear-gradient(135deg, #06b6d4, #2563eb); border: 2.5px solid #ffffff; box-shadow: 0 0 16px #06b6d4, 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;">
+            <div style="width: 8px; height: 8px; border-radius: 9999px; background-color: #ffffff; box-shadow: 0 0 6px #ffffff;"></div>
           </div>
-          <div style="margin-top: 4px; padding: 2px 7px; border-radius: 9999px; background-color: rgba(15, 23, 42, 0.95); color: #67e8f9; font-size: 9px; font-weight: 800; border: 1px solid rgba(6, 182, 212, 0.4); box-shadow: 0 4px 6px rgba(0,0,0,0.3); white-space: nowrap;">
-            Vous êtes ici
+          <div style="margin-top: 4px; padding: 2.5px 8px; border-radius: 9999px; background-color: rgba(15, 23, 42, 0.95); color: #67e8f9; font-size: 10px; font-weight: 800; border: 1.5px solid rgba(6, 182, 212, 0.6); box-shadow: 0 4px 10px rgba(0,0,0,0.4); white-space: nowrap; letter-spacing: 0.02em;">
+            📍 Vous êtes ici
           </div>
         </div>
       `;
 
       userMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat([originCoords.lng, originCoords.lat])
+        .setLngLat([effectiveCoords.lng, effectiveCoords.lat])
         .addTo(map);
     } else {
-      userMarkerRef.current.setLngLat([originCoords.lng, originCoords.lat]);
+      userMarkerRef.current.setLngLat([effectiveCoords.lng, effectiveCoords.lat]);
     }
-  }, [originCoords]);
+  }, [originCoords, lastKnownUserPos]);
 
   // 5. Fit Bounds on filter change or manual recenter
   useEffect(() => {
@@ -285,11 +522,12 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
     map.fitBounds(bounds, { padding: 80, maxZoom: 16 });
   }, [filteredLocations, recenterTrigger, activeRouteTarget]);
 
-  // 6. Draw Route Function
+  // 6. Draw Route Function (with optional shouldFitBounds, default false to avoid hijacking user camera)
   const drawRouteLayer = (
     map: maplibregl.Map,
     coords: [number, number][],
-    mode: 'DRIVING' | 'WALKING' | 'BICYCLING'
+    mode: 'DRIVING' | 'WALKING' | 'BICYCLING',
+    shouldFitBounds: boolean = false
   ) => {
     const color = mode === 'WALKING' ? '#10b981' : mode === 'BICYCLING' ? '#f59e0b' : '#38bdf8';
 
@@ -304,6 +542,12 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
 
     if (map.getSource('active-route')) {
       (map.getSource('active-route') as maplibregl.GeoJSONSource).setData(geojsonData);
+      if (map.getLayer('active-route-line')) {
+        map.setPaintProperty('active-route-line', 'line-color', color);
+      }
+      if (map.getLayer('active-route-glow')) {
+        map.setPaintProperty('active-route-glow', 'line-color', color);
+      }
     } else {
       map.addSource('active-route', {
         type: 'geojson',
@@ -344,10 +588,23 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
       });
     }
 
-    // Fit camera to route bounds
+    // Only fit bounds if explicitly requested (e.g. on initial calculation or user click)
+    if (shouldFitBounds && coords.length > 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      coords.forEach((pt) => bounds.extend(pt));
+      map.fitBounds(bounds, { padding: { top: 90, bottom: 90, left: 60, right: 60 }, maxZoom: 16 });
+    }
+  };
+
+  const fitRouteBounds = () => {
+    const map = mapRef.current;
+    if (!map || !routeInfo || routeInfo.coordinates.length === 0) return;
     const bounds = new maplibregl.LngLatBounds();
-    coords.forEach((pt) => bounds.extend(pt));
-    map.fitBounds(bounds, { padding: { top: 90, bottom: 90, left: 60, right: 60 } });
+    routeInfo.coordinates.forEach((pt) => bounds.extend(pt));
+    map.fitBounds(bounds, {
+      padding: { top: 90, bottom: 90, left: 60, right: 60 },
+      maxZoom: 16,
+    });
   };
 
   const removeRouteLayer = (map: maplibregl.Map) => {
@@ -364,8 +621,32 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
     if (!activeRouteTarget || !originCoords) {
       removeRouteLayer(map);
       setRouteInfo(null);
+      hasFittedRouteRef.current = false;
+      lastRouteTargetIdRef.current = null;
+      lastOriginRef.current = null;
+      lastTravelModeRef.current = null;
       return;
     }
+
+    const isNewTarget = lastRouteTargetIdRef.current !== activeRouteTarget.id;
+    const isNewMode = lastTravelModeRef.current !== travelMode;
+    const movedMeters = lastOriginRef.current
+      ? getDistanceMeters(
+          lastOriginRef.current.lat,
+          lastOriginRef.current.lng,
+          originCoords.lat,
+          originCoords.lng
+        )
+      : Infinity;
+
+    // Skip recalculation if same target & mode and user has moved less than 25 meters
+    if (!isNewTarget && !isNewMode && movedMeters < 25) {
+      return;
+    }
+
+    lastRouteTargetIdRef.current = activeRouteTarget.id;
+    lastTravelModeRef.current = travelMode;
+    lastOriginRef.current = { lat: originCoords.lat, lng: originCoords.lng };
 
     let isMounted = true;
 
@@ -376,8 +657,14 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
     ).then((result) => {
       if (!isMounted) return;
       setRouteInfo(result);
+
       if (mapRef.current) {
-        drawRouteLayer(mapRef.current, result.coordinates, travelMode);
+        // Fit camera ONCE on new target initial route display, NEVER automatically on subsequent GPS updates
+        const shouldFit = !hasFittedRouteRef.current;
+        if (shouldFit) {
+          hasFittedRouteRef.current = true;
+        }
+        drawRouteLayer(mapRef.current, result.coordinates, travelMode, shouldFit);
       }
     });
 
@@ -389,6 +676,11 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
   const handleClearRoute = () => {
     setActiveRouteTarget(null);
     setRouteInfo(null);
+    hasFittedRouteRef.current = false;
+    lastRouteTargetIdRef.current = null;
+    lastOriginRef.current = null;
+    lastTravelModeRef.current = null;
+    setIsRoutePanelCollapsed(false);
     if (mapRef.current) {
       removeRouteLayer(mapRef.current);
     }
@@ -398,6 +690,9 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
   const handleStartRoute = (loc: PartnerLocation) => {
     setActiveRouteTarget(loc);
     setSelectedLocation(null);
+    hasFittedRouteRef.current = false;
+    lastRouteTargetIdRef.current = null;
+    setIsRoutePanelCollapsed(false);
     onSetRouteTarget?.(loc);
   };
 
@@ -462,95 +757,254 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
             </div>
           </div>
 
-          {/* Collapsible Body: Search + Map Type + Category Pills */}
+          {/* Collapsible Body: Search + Category Filter Dropdown + Map Type */}
           {!optionsCollapsed && (
-            <div className="flex flex-col gap-2.5 pt-2 border-t border-slate-200 dark:border-slate-800/80 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                {/* Search */}
-                <div className="relative flex-1 sm:max-w-xs">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder={t('common.search')}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs"
-                    >
-                      ✕
-                    </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-200 dark:border-slate-800/80 animate-fade-in">
+              {/* Search Bar */}
+              <div className="relative flex-1 min-w-[200px] sm:max-w-xs">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder={t('common.search')}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Right Controls: Category Dropdown Filter & Map Type Switcher */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Category Dropdown Filter Button (Déroulant) */}
+                <div className="relative" ref={categoryMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryMenuOpen((prev) => !prev)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer shadow-xs ${
+                      selectedCategoryId !== 'all'
+                        ? 'bg-blue-50 dark:bg-blue-950/70 border-blue-400 dark:border-blue-600 text-blue-900 dark:text-blue-100 ring-1 ring-blue-400/40'
+                        : 'bg-slate-50 dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                    title="Filtrer les partenaires par catégorie"
+                    aria-expanded={isCategoryMenuOpen}
+                  >
+                    <Filter className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-slate-500 dark:text-slate-400 font-medium">Catégorie :</span>
+                      {activeCategory ? (
+                        <span className="flex items-center gap-1.5 font-bold truncate max-w-[130px] sm:max-w-[170px]">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: activeCategory.color || '#3B82F6' }}
+                          />
+                          <span className="truncate">{activeCategory.name}</span>
+                        </span>
+                      ) : (
+                        <span className="font-bold">Toutes</span>
+                      )}
+                    </span>
+
+                    <span className="px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-[10px] font-bold text-slate-700 dark:text-slate-300 shrink-0">
+                      {selectedCategoryId === 'all' ? locations.length : (categoryCounts[selectedCategoryId] || 0)}
+                    </span>
+
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-slate-400 transition-transform shrink-0 ${
+                        isCategoryMenuOpen ? 'rotate-180 text-blue-600 dark:text-cyan-400' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {/* Dropdown Menu Panel: Dérouler les catégories pour sélectionner ou enrôler */}
+                  {isCategoryMenuOpen && (
+                    <div className="absolute right-0 sm:left-0 top-full mt-1.5 w-72 sm:w-84 max-h-[75vh] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col animate-fade-in">
+                      {/* Header */}
+                      <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/80 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Tag className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                          <span className="text-xs font-bold text-slate-900 dark:text-white">
+                            Filtrer par catégorie
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                          {categories.length} catégories
+                        </span>
+                      </div>
+
+                      {/* Category List */}
+                      <div className="overflow-y-auto p-1.5 space-y-1 divide-y divide-slate-100 dark:divide-slate-800/40">
+                        {/* Option: Toutes les catégories */}
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCategoryId('all');
+                              setIsCategoryMenuOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                              selectedCategoryId === 'all'
+                                ? 'bg-blue-600 text-white shadow-sm'
+                                : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                                  selectedCategoryId === 'all'
+                                    ? 'border-white bg-white text-blue-600'
+                                    : 'border-slate-400'
+                                }`}
+                              >
+                                {selectedCategoryId === 'all' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                              </span>
+                              <span>Toutes les catégories</span>
+                            </div>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                selectedCategoryId === 'all'
+                                  ? 'bg-white/25 text-white'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                              }`}
+                            >
+                              {locations.length}
+                            </span>
+                          </button>
+                        </div>
+
+                        {/* Individual Category Items */}
+                        <div className="pt-1 space-y-1">
+                          {categories.map((cat) => {
+                            const count = categoryCounts[cat.id] || 0;
+                            const isSelected = selectedCategoryId === cat.id;
+
+                            return (
+                              <div
+                                key={cat.id}
+                                className={`group flex items-center justify-between px-2.5 py-1.5 rounded-xl transition-all ${
+                                  isSelected
+                                    ? 'bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-700/60'
+                                    : 'hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-transparent'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCategoryId(cat.id);
+                                    setIsCategoryMenuOpen(false);
+                                  }}
+                                  className="flex-1 flex items-center gap-2 text-left text-xs font-semibold cursor-pointer min-w-0 pr-2"
+                                >
+                                  <span
+                                    className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs flex items-center justify-center text-white text-[9px]"
+                                    style={{ backgroundColor: cat.color || '#3B82F6' }}
+                                  >
+                                    {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                  </span>
+                                  <span
+                                    className={`truncate ${
+                                      isSelected
+                                        ? 'text-blue-950 dark:text-blue-100 font-bold'
+                                        : 'text-slate-800 dark:text-slate-200'
+                                    }`}
+                                  >
+                                    {cat.name}
+                                  </span>
+                                </button>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span
+                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                      isSelected
+                                        ? 'bg-blue-200 dark:bg-blue-900/60 text-blue-900 dark:text-blue-200'
+                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                    }`}
+                                  >
+                                    {count}
+                                  </span>
+
+                                  {/* Quick Enrol / Relever button for this category */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setIsCategoryMenuOpen(false);
+                                      onNavigateToCapture();
+                                    }}
+                                    className="p-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold transition-all cursor-pointer flex items-center gap-0.5 border border-emerald-300/40"
+                                    title={`Enrôler un nouveau partenaire sous ${cat.name}`}
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    <span className="hidden sm:inline">Enrôler</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Footer Actions */}
+                      <div className="p-2.5 bg-slate-50 dark:bg-slate-950/90 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCategoryMenuOpen(false);
+                            onNavigateToCapture();
+                          }}
+                          className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Enrôler un partenaire</span>
+                        </button>
+
+                        {selectedCategoryId !== 'all' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCategoryId('all');
+                              setIsCategoryMenuOpen(false);
+                            }}
+                            className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                          >
+                            Réinitialiser
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {/* Map Type Switcher */}
-                <div className="flex items-center gap-2">
-                  <select
-                    value={mapTypeId}
-                    onChange={(e) => setMapTypeId(e.target.value as MapTypeMode)}
-                    className="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none"
+                {/* Reset filter button if active */}
+                {selectedCategoryId !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryId('all')}
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                    title="Effacer le filtre et afficher toutes les catégories"
                   >
-                    <option value="roadmap">🗺️ {t('map.modeRoad')} (Carto)</option>
-                    <option value="satellite">🛰️ {t('map.modeSat')} (HD)</option>
-                    <option value="hybrid">🌐 {t('map.modeHyb')}</option>
-                    <option value="terrain">⛰️ {t('map.modeTer')}</option>
-                  </select>
-                </div>
-              </div>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
 
-              {/* Category Filter Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700">
-                <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1 shrink-0">
-                  <Tag className="w-3 h-3" /> {t('common.filter')}:
-                </span>
-
-                <button
-                  onClick={() => setSelectedCategoryId('all')}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-all cursor-pointer ${
-                    selectedCategoryId === 'all'
-                      ? 'text-white shadow-sm'
-                      : 'bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-                  }`}
-                  style={{
-                    backgroundColor: selectedCategoryId === 'all' ? accentConfig.hex : undefined,
-                  }}
+                {/* Map Type Switcher */}
+                <select
+                  value={mapTypeId}
+                  onChange={(e) => setMapTypeId(e.target.value as MapTypeMode)}
+                  className="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none"
                 >
-                  <span>{t('map.allCategories')}</span>
-                  <span className="text-[10px] px-1 rounded-full bg-white/20 font-bold">
-                    {locations.length}
-                  </span>
-                </button>
-
-                {categories.map((cat) => {
-                  const count = categoryCounts[cat.id] || 0;
-                  const isSelected = selectedCategoryId === cat.id;
-                  return (
-                    <button
-                      key={cat.id}
-                      onClick={() => setSelectedCategoryId(cat.id)}
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-all cursor-pointer ${
-                        isSelected
-                          ? 'text-white shadow-sm'
-                          : 'bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-                      }`}
-                      style={{
-                        backgroundColor: isSelected ? cat.color || accentConfig.hex : undefined,
-                      }}
-                    >
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: cat.color }}
-                      />
-                      <span>{cat.name}</span>
-                      <span className="text-[10px] px-1 rounded-full bg-white/20 font-bold">
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
+                  <option value="roadmap">🗺️ {t('map.modeRoad')} (Carto)</option>
+                  <option value="satellite">🛰️ {t('map.modeSat')} (HD)</option>
+                  <option value="hybrid">🌐 {t('map.modeHyb')}</option>
+                  <option value="terrain">⛰️ {t('map.modeTer')}</option>
+                </select>
               </div>
             </div>
           )}
@@ -696,19 +1150,19 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
           </div>
         )}
 
-        {/* Floating Route Details HUD Card */}
-        {activeRouteTarget && (
+        {/* Floating Route Details HUD Card (Expanded) */}
+        {activeRouteTarget && !isRoutePanelCollapsed && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[94%] max-w-xl animate-fade-in pointer-events-auto">
             <div className="bg-slate-900/95 backdrop-blur-md border border-cyan-500/40 rounded-2xl p-4 shadow-2xl text-white">
               {/* Card Header */}
               <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0">
                     <Route className="w-4 h-4" />
                   </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-                      <span>Itinéraire vers {activeRouteTarget.name}</span>
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-bold text-white truncate flex items-center gap-1.5">
+                      <span>Itinéraire vers {activeRouteTarget.partnerName || activeRouteTarget.name}</span>
                     </h2>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-semibold inline-block mt-0.5"
@@ -722,13 +1176,36 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={handleClearRoute}
-                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                  title="Fermer l'itinéraire"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                {/* Header Action Buttons */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Recenter button */}
+                  <button
+                    onClick={fitRouteBounds}
+                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    title="Recentrer la vue sur l'itinéraire"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                  </button>
+
+                  {/* Minimize / Hide window button (keeps route line visible) */}
+                  <button
+                    onClick={() => setIsRoutePanelCollapsed(true)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors cursor-pointer text-xs font-semibold"
+                    title="Masquer la fenêtre pour explorer librement la carte (le tracé reste affiché)"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                    <span className="hidden sm:inline">Masquer</span>
+                  </button>
+
+                  {/* Close window (minimizes panel so route is NOT lost) */}
+                  <button
+                    onClick={() => setIsRoutePanelCollapsed(true)}
+                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                    title="Fermer la fenêtre (le tracé reste affiché sur la carte)"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               {/* Origin & Destination Telemetry */}
@@ -849,6 +1326,80 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
                   </a>
                 )}
               </div>
+
+              {/* Bottom Card Controls: Minimize (keep route) vs Clear (delete route) */}
+              <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setIsRoutePanelCollapsed(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition-colors cursor-pointer text-[11px] font-medium"
+                  title="Masquer cette fenêtre pour naviguer librement sur la carte (le tracé reste affiché)"
+                >
+                  <EyeOff className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Masquer la fenêtre (garder le tracé)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleClearRoute}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer text-[11px] font-medium"
+                  title="Effacer le tracé et annuler l'itinéraire"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Effacer l'itinéraire</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Route Details HUD Card (Minimized Pill - keeps route line 100% active on the map) */}
+        {activeRouteTarget && isRoutePanelCollapsed && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto animate-fade-in max-w-[94%]">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-900/95 backdrop-blur-md border border-cyan-500/50 shadow-2xl text-white text-xs">
+              <span className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 shrink-0">
+                <Route className="w-4 h-4" />
+              </span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-bold text-slate-100 truncate max-w-[130px] sm:max-w-[200px]">
+                  {activeRouteTarget.partnerName || activeRouteTarget.name}
+                </span>
+                {routeInfo && (
+                  <span className="text-cyan-300 font-mono text-[11px] bg-cyan-950/80 px-2 py-0.5 rounded-full border border-cyan-500/30 shrink-0">
+                    {routeInfo.distanceText} • {routeInfo.durationText}
+                  </span>
+                )}
+              </div>
+
+              <div className="h-4 w-[1px] bg-slate-700 mx-0.5" />
+
+              {/* Recenter button */}
+              <button
+                onClick={fitRouteBounds}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                title="Recentrer la carte sur l'itinéraire"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Expand / Details button */}
+              <button
+                onClick={() => setIsRoutePanelCollapsed(false)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-sm"
+                title="Afficher les options et détails de l'itinéraire"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>Options & Détails</span>
+              </button>
+
+              {/* Clear route button */}
+              <button
+                onClick={handleClearRoute}
+                className="p-1.5 rounded-lg hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer shrink-0"
+                title="Effacer le tracé et quitter l'itinéraire"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         )}
@@ -877,6 +1428,22 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Floating High-Precision Notification Feedback Toast */}
+        {locateFeedback && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-fade-in max-w-[90%]">
+            <div
+              className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-bold shadow-2xl backdrop-blur-md border ${
+                locateFeedback.type === 'success'
+                  ? 'bg-emerald-950/90 text-emerald-200 border-emerald-500/60'
+                  : 'bg-amber-950/90 text-amber-200 border-amber-500/60'
+              }`}
+            >
+              <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span>{locateFeedback.message}</span>
+            </div>
+          </div>
+        )}
 
         {/* Empty state notice if category has no points */}
         {filteredLocations.length === 0 && (

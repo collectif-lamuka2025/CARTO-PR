@@ -203,16 +203,12 @@ export function setLocalCategoriesCache(userId: string | undefined, categories: 
 export async function seedDefaultCategoriesIfEmpty(userId: string): Promise<void> {
   if (!userId) return;
   try {
-    const colRef = collection(db, CATEGORIES_COLLECTION);
-    const existing = await getDocs(colRef);
-    if (!existing.empty) return;
-
     for (const cat of DEFAULT_STRATEGIC_CATEGORIES) {
       const docPayload = cleanCategoryForFirestore({
         ...cat,
         createdBy: userId,
       });
-      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), docPayload, { merge: true });
+      setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), docPayload, { merge: true }).catch(() => {});
     }
   } catch (error) {
     console.warn('Initialisation des catégories par défaut via Firebase:', error);
@@ -226,16 +222,54 @@ export async function restoreStrategicCategories(userId: string): Promise<Catego
     createdAt: new Date().toISOString(),
   }));
 
+  // 1. Identify obsolete or custom categories to clean up
+  const current = getLocalCategoriesCache(userId);
+  const defaultIds = new Set(restored.map((c) => c.id));
+  const toDelete = current.filter((c) => !defaultIds.has(c.id));
+
+  // 2. Synchronous immediate local update:
+  // Write to localStorage & trigger React state updates in ALL components right away!
   setLocalCategoriesCache(userId, restored);
+  setLocalCategoriesCache('global', restored);
   broadcastCategories(restored);
 
-  try {
-    for (const cat of restored) {
-      await setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), cleanCategoryForFirestore(cat), { merge: true });
+  // 3. Update IndexedDB asynchronously in background (don't block UI)
+  (async () => {
+    try {
+      const { getLocalDB } = await import('./db');
+      const localDb = await getLocalDB();
+      const tx = localDb.transaction('categories', 'readwrite');
+      await tx.store.clear();
+      for (const cat of restored) {
+        await tx.store.put(cat);
+      }
+      await tx.done;
+    } catch (e) {
+      console.warn('Erreur mise à jour IndexedDB catégories:', e);
     }
-  } catch (error) {
-    console.warn('Erreur restauration catégories stratégiques:', error);
-  }
+  })();
+
+  // 4. Update Firestore in the background with local cache persistence without blocking UI
+  (async () => {
+    try {
+      // Delete old non-default categories
+      for (const cat of toDelete) {
+        try {
+          deleteDoc(doc(db, CATEGORIES_COLLECTION, cat.id)).catch(() => {});
+        } catch (_) {}
+      }
+
+      // Write default categories
+      for (const cat of restored) {
+        try {
+          const payload = cleanCategoryForFirestore(cat);
+          setDoc(doc(db, CATEGORIES_COLLECTION, cat.id), payload, { merge: true }).catch(() => {});
+        } catch (_) {}
+      }
+    } catch (error) {
+      console.warn('Erreur synchronisation Firestore catégories par défaut:', error);
+    }
+  })();
 
   return restored;
 }
@@ -466,6 +500,36 @@ export async function savePartnerLocation(location: PartnerLocation): Promise<Pa
   }
 
   return updated;
+}
+
+// ----------------- Update Partner Location Category Only -----------------
+/**
+ * Updates exclusively the category of a partner location while keeping all GPS coordinates,
+ * altitude, accuracy, contact info, notes, agent metadata, and creation timestamp 100% intact.
+ */
+export async function updatePartnerLocationCategory(
+  location: PartnerLocation,
+  newCategory: Category
+): Promise<PartnerLocation> {
+  const updatedLocation: PartnerLocation = {
+    ...location,
+    categoryId: newCategory.id,
+    categoryName: newCategory.name,
+    categoryColor: newCategory.color,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await savePartnerLocation(updatedLocation);
+
+  // Sync to local IndexedDB for full offline resilience
+  try {
+    const { putLocalLocation } = await import('./db');
+    await putLocalLocation(updatedLocation);
+  } catch (e) {
+    // Non-blocking
+  }
+
+  return updatedLocation;
 }
 
 // ----------------- Delete Partner Location -----------------

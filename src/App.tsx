@@ -37,7 +37,7 @@ function AppContent() {
   const [categories, setCategories] = useState<Category[]>(() => getLocalCategoriesCache());
   const [locations, setLocations] = useState<PartnerLocation[]>([]);
 
-  const { gps, setSimulatedPosition } = useGeolocation();
+  const { gps, refreshPosition, setSimulatedPosition } = useGeolocation();
   const [routeTarget, setRouteTarget] = useState<PartnerLocation | null>(null);
 
   // Listen to Firebase Auth state
@@ -154,6 +154,7 @@ function AppContent() {
               onClearRoute={() => setRouteTarget(null)}
               onSetRouteTarget={setRouteTarget}
               onSimulateGPS={() => setSimulatedPosition(-4.325142, 15.312984, 298.5, 3.2)}
+              onRefreshGPS={refreshPosition}
               onNavigateToCapture={() => setActiveTab('capture')}
             />
           )}

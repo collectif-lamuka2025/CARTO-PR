@@ -8,10 +8,36 @@ import { StyleSpecification } from 'maplibre-gl';
  * OpenTopoMap: topographic relief contours and elevation shading.
  */
 
-export type MapTypeMode = 'roadmap' | 'satellite' | 'hybrid' | 'terrain';
+export type MapTypeMode = 'roadmap' | 'satellite' | 'hybrid' | 'terrain' | 'dark';
 
 export function getMapLibreStyle(mode: MapTypeMode): StyleSpecification {
   switch (mode) {
+    case 'dark':
+      return {
+        version: 8,
+        name: 'Dark',
+        sources: {
+          dark: {
+            type: 'raster',
+            tiles: [
+              'https://a.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png',
+              'https://b.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png',
+              'https://c.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png',
+            ],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors, © CARTO',
+            maxzoom: 19,
+          },
+        },
+        layers: [
+          {
+            id: 'dark-tiles',
+            type: 'raster',
+            source: 'dark',
+            minzoom: 0,
+          },
+        ],
+      };
     case 'satellite':
       return {
         version: 8,
@@ -33,7 +59,6 @@ export function getMapLibreStyle(mode: MapTypeMode): StyleSpecification {
             type: 'raster',
             source: 'satellite',
             minzoom: 0,
-            maxzoom: 19,
           },
         ],
       };
@@ -67,14 +92,12 @@ export function getMapLibreStyle(mode: MapTypeMode): StyleSpecification {
             type: 'raster',
             source: 'satellite',
             minzoom: 0,
-            maxzoom: 19,
           },
           {
             id: 'labels-tiles',
             type: 'raster',
             source: 'labels',
             minzoom: 0,
-            maxzoom: 19,
           },
         ],
       };
@@ -102,7 +125,6 @@ export function getMapLibreStyle(mode: MapTypeMode): StyleSpecification {
             type: 'raster',
             source: 'terrain',
             minzoom: 0,
-            maxzoom: 17,
           },
         ],
       };
@@ -131,7 +153,6 @@ export function getMapLibreStyle(mode: MapTypeMode): StyleSpecification {
             type: 'raster',
             source: 'osm',
             minzoom: 0,
-            maxzoom: 19,
           },
         ],
       };

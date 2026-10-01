@@ -65,6 +65,40 @@ html.dark, [data-theme="dark"], body.dark {
   }
 }
 
+/* Integrated MapLibre Custom Locate Control */
+.maplibregl-ctrl-locate-btn {
+  width: 29px;
+  height: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #0284c7;
+  padding: 0;
+  outline: none;
+  transition: all 0.15s ease;
+}
+.maplibregl-ctrl-locate-btn:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+  color: #0369a1;
+}
+.dark .maplibregl-ctrl-locate-btn {
+  color: #38bdf8;
+}
+.dark .maplibregl-ctrl-locate-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #7dd3fc;
+}
+.dark .maplibregl-ctrl-group {
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+}
+.dark .maplibregl-ctrl-group button {
+  border-bottom-color: #1e293b;
+}
+
 .animate-fade-in {
   animation: fadeIn 0.2s ease-out forwards;
 }

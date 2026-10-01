@@ -218,6 +218,14 @@ const TRANSLATIONS: Record<string, { fr: string; en: string }> = {
   'list.locateOnMap': { fr: 'Voir sur Carte', en: 'View on Map' },
   'list.delete': { fr: 'Supprimer', en: 'Delete' },
   'list.noResults': { fr: 'Aucun partenaire trouvé', en: 'No partners found' },
+  'list.changeCategory': { fr: 'Changer la catégorie', en: 'Change category' },
+  'list.categoryChanged': { fr: 'Catégorie modifiée avec succès', en: 'Category updated successfully' },
+  'list.coordsPreserved': {
+    fr: 'Coordonnées GPS et informations du lieu préservées à 100%',
+    en: 'GPS coordinates and place information 100% preserved',
+  },
+  'list.selectNewCategory': { fr: 'Attribuer une autre catégorie', en: 'Assign another category' },
+  'list.currentCategory': { fr: 'Catégorie actuelle', en: 'Current category' },
 
   // Categories
   'cat.header': { fr: 'Gestion des Catégories', en: 'Categories Management' },
