@@ -77,11 +77,43 @@ export const AuthGateView: React.FC = () => {
     try {
       if (authMode === 'signup') {
         const userCred = await createUserWithEmailAndPassword(auth, email, password);
+        const finalName = displayName.trim() || email.split('@')[0];
         if (displayName.trim() && userCred.user) {
-          await updateProfile(userCred.user, { displayName: displayName.trim() });
+          await updateProfile(userCred.user, { displayName: finalName });
+        }
+        try {
+          localStorage.setItem(
+            'carto_structure_credentials',
+            JSON.stringify({
+              structureName: finalName,
+              email: email.trim(),
+              password: password,
+              updatedAt: new Date().toISOString(),
+            })
+          );
+        } catch (e) {
+          console.warn('Erreur stockage identifiants:', e);
         }
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const userCred = await signInWithEmailAndPassword(auth, email, password);
+        try {
+          let existingName = '';
+          const raw = localStorage.getItem('carto_structure_credentials');
+          if (raw) {
+            existingName = JSON.parse(raw).structureName || '';
+          }
+          localStorage.setItem(
+            'carto_structure_credentials',
+            JSON.stringify({
+              structureName: userCred.user?.displayName || existingName || email.split('@')[0],
+              email: email.trim(),
+              password: password,
+              updatedAt: new Date().toISOString(),
+            })
+          );
+        } catch (e) {
+          console.warn('Erreur stockage identifiants:', e);
+        }
       }
     } catch (err: any) {
       console.warn('Email Auth status:', err?.code || err?.message);
@@ -294,11 +326,11 @@ export const AuthGateView: React.FC = () => {
             {authMode === 'signup' && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Nom de l'agent
+                  Nom de la structure / Agent
                 </label>
                 <input
                   type="text"
-                  placeholder="ex: Jean Mukendi"
+                  placeholder="ex: Collectif LAMUKA, ONG Espoir..."
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"

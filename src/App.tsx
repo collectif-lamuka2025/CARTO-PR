@@ -191,7 +191,7 @@ function AppContent() {
             <FieldAssistantView gps={gps} locations={locations} />
           )}
 
-          {activeTab === 'settings' && <SettingsView />}
+          {activeTab === 'settings' && <SettingsView user={user} />}
         </main>
       </div>
     </div>

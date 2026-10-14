@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { User, updateProfile } from 'firebase/auth';
+import { auth } from '../firebase/config';
 import { usePreferences, ACCENT_COLORS, AccentColorKey } from '../context/PreferencesContext';
 import { CollapsiblePanel } from './CollapsiblePanel';
 import {
@@ -18,9 +20,24 @@ import {
   MessageCircle,
   ExternalLink,
   Phone,
+  Key,
+  Lock,
+  Eye,
+  EyeOff,
+  Copy,
+  Edit3,
+  Save,
+  CheckCircle2,
+  AlertCircle,
+  Mail,
+  UserCheck,
 } from 'lucide-react';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  user?: User | null;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ user }) => {
   const {
     theme,
     setTheme,
@@ -39,6 +56,85 @@ export const SettingsView: React.FC = () => {
   };
 
   const accentKeys = Object.keys(ACCENT_COLORS) as AccentColorKey[];
+
+  // Structure & Credentials state (Hidden password by default)
+  const [showPassword, setShowPassword] = useState(false);
+  const [copiedField, setCopiedField] = useState<'password' | 'email' | 'all' | null>(null);
+  const [isEditingCredentials, setIsEditingCredentials] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const [credentials, setCredentials] = useState(() => {
+    try {
+      const raw = localStorage.getItem('carto_structure_credentials');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          structureName: parsed.structureName || user?.displayName || 'Structure CARTO-PR',
+          email: parsed.email || user?.email || '',
+          password: parsed.password || '',
+          updatedAt: parsed.updatedAt || '',
+        };
+      }
+    } catch (e) {
+      console.warn('Erreur chargement identifiants structure:', e);
+    }
+    return {
+      structureName: user?.displayName || (user?.email ? user.email.split('@')[0] : 'Structure Principale'),
+      email: user?.email || '',
+      password: '',
+      updatedAt: '',
+    };
+  });
+
+  const [editStructureName, setEditStructureName] = useState(credentials.structureName);
+  const [editPassword, setEditPassword] = useState(credentials.password);
+
+  // Sync if user displayName changes
+  useEffect(() => {
+    if (user?.displayName && (!credentials.structureName || credentials.structureName === 'Structure Principale')) {
+      setCredentials((prev) => ({
+        ...prev,
+        structureName: user.displayName || prev.structureName,
+        email: user.email || prev.email,
+      }));
+      setEditStructureName(user.displayName);
+    }
+  }, [user]);
+
+  const handleCopy = (text: string, field: 'password' | 'email' | 'all') => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2500);
+  };
+
+  const handleSaveCredentials = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const updated = {
+      structureName: editStructureName.trim() || 'Structure CARTO-PR',
+      email: credentials.email || user?.email || '',
+      password: editPassword,
+      updatedAt: new Date().toISOString(),
+    };
+    setCredentials(updated);
+    try {
+      localStorage.setItem('carto_structure_credentials', JSON.stringify(updated));
+    } catch (err) {
+      console.warn('Erreur sauvegarde identifiants:', err);
+    }
+    setIsEditingCredentials(false);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3000);
+
+    // Update Firebase user profile displayName
+    if (auth.currentUser && editStructureName.trim()) {
+      try {
+        await updateProfile(auth.currentUser, { displayName: editStructureName.trim() });
+      } catch (err) {
+        console.warn('Erreur mise à jour profil Firebase:', err);
+      }
+    }
+  };
 
   return (
     <div className="flex-1 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 p-4 sm:p-6 lg:p-8 overflow-y-auto transition-colors">
@@ -70,6 +166,287 @@ export const SettingsView: React.FC = () => {
             <span>{t('settings.resetDefaults')}</span>
           </button>
         </div>
+
+        {/* 0. Identifiants & Structure - Password View & Recovery */}
+        <CollapsiblePanel
+          title="Nom de la Structure & Mot de passe de connexion"
+          subtitle="Consultez et sauvegardez vos identifiants pour ne plus jamais risquer d'oublier votre accès"
+          icon={<Key className="w-4 h-4 text-amber-500" />}
+          defaultExpanded={true}
+          badge={
+            <span
+              className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
+              style={{ backgroundColor: accentConfig.hex }}
+            >
+              Accès Enregistré
+            </span>
+          }
+        >
+          <div className="mt-3 space-y-4">
+            {/* Success message */}
+            {saveSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2 animate-fade-in font-medium">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span>Identifiants de la structure enregistrés avec succès !</span>
+              </div>
+            )}
+
+            {!isEditingCredentials ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 1. Structure Name Card */}
+                <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-xs font-semibold">
+                        <Building2 className="w-4 h-4 text-blue-500" />
+                        <span>Nom de la Structure</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-cyan-400 font-bold border border-blue-500/20">
+                        Organisation
+                      </span>
+                    </div>
+                    <div className="font-extrabold text-base sm:text-lg text-slate-900 dark:text-white tracking-tight break-words">
+                      {credentials.structureName || 'Non défini'}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500">
+                    <span className="text-[11px] text-slate-400">
+                      Compte : {user?.email || credentials.email || 'Agent'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditStructureName(credentials.structureName);
+                        setEditPassword(credentials.password);
+                        setIsEditingCredentials(true);
+                      }}
+                      className="text-blue-600 dark:text-cyan-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Modifier</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Connection Password Card (Hidden by default + reveal button) */}
+                <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-xs font-semibold">
+                        <Lock className="w-4 h-4 text-amber-500" />
+                        <span>Mot de passe de connexion</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/20 flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3" />
+                        {showPassword ? 'Visible' : 'Masqué par défaut'}
+                      </span>
+                    </div>
+
+                    {/* Password display area */}
+                    <div className="mt-2 min-h-[40px] flex items-center">
+                      {credentials.password ? (
+                        showPassword ? (
+                          <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 font-mono font-bold text-sm text-amber-900 dark:text-amber-200 select-all tracking-wider break-all w-full">
+                            {credentials.password}
+                          </div>
+                        ) : (
+                          <div className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-base tracking-widest text-slate-500 dark:text-slate-400 select-none w-full">
+                            ••••••••••••••••
+                          </div>
+                        )
+                      ) : (
+                        <div className="text-xs text-slate-400 italic">
+                          Aucun mot de passe enregistré pour cette structure.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions: Show/Hide & Copy */}
+                  <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {credentials.password && (
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer border border-slate-200 dark:border-slate-700"
+                        >
+                          {showPassword ? (
+                            <>
+                              <EyeOff className="w-3.5 h-3.5 text-amber-500" />
+                              <span>Masquer le mot de passe</span>
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="w-3.5 h-3.5 text-amber-500" />
+                              <span>Afficher le mot de passe</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {credentials.password && (
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(credentials.password, 'password')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer border border-slate-200 dark:border-slate-700"
+                          title="Copier le mot de passe dans le presse-papier"
+                        >
+                          {copiedField === 'password' ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Copié !</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5 text-slate-500" />
+                              <span>Copier</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditStructureName(credentials.structureName);
+                        setEditPassword(credentials.password);
+                        setIsEditingCredentials(true);
+                      }}
+                      className="text-xs font-bold text-blue-600 dark:text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer ml-auto"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>{credentials.password ? 'Modifier' : 'Renseigner'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Edit Form */
+              <form onSubmit={handleSaveCredentials} className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-blue-500/40 shadow-xl space-y-4 animate-fade-in">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-cyan-400">
+                      <Edit3 className="w-4 h-4" />
+                    </span>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Mettre à jour les accès de la structure
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingCredentials(false)}
+                    className="text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                  >
+                    Annuler
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Nom de la structure / Organisation
+                    </label>
+                    <div className="relative">
+                      <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        required
+                        value={editStructureName}
+                        onChange={(e) => setEditStructureName(e.target.value)}
+                        placeholder="ex: Collectif LAMUKA, ONG Espoir..."
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Mot de passe de connexion
+                    </label>
+                    <div className="relative">
+                      <Key className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        value={editPassword}
+                        onChange={(e) => setEditPassword(e.target.value)}
+                        placeholder="Renseignez votre mot de passe..."
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl pl-9 pr-10 py-2.5 text-xs text-slate-900 dark:text-white font-mono font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                        title={showPassword ? 'Masquer' : 'Afficher'}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                    Enregistré localement sur votre terminal pour éviter toute perte
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingCredentials(false)}
+                      className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-md transition-all cursor-pointer"
+                      style={{ backgroundColor: accentConfig.hex }}
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Enregistrer les identifiants</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {/* Quick Combined Export Button */}
+            <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                <Info className="w-4 h-4 text-blue-500 shrink-0" />
+                <span>
+                  Besoin de transmettre ces accès à un agent de terrain ou collègue ?
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const summary = `FICHE D'ACCÈS CARTO-PR\nStructure : ${credentials.structureName}\nEmail / Identifiant : ${credentials.email || user?.email || 'N/D'}\nMot de passe : ${credentials.password || '(non renseigné)'}\nLien application : ${window.location.origin}`;
+                  handleCopy(summary, 'all');
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-850 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-bold shadow-xs transition-colors cursor-pointer shrink-0 self-start sm:self-auto"
+              >
+                {copiedField === 'all' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                    <span className="text-emerald-600 dark:text-emerald-400">Fiche complète copiée !</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Copier la fiche complète de connexion</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </CollapsiblePanel>
 
         {/* 1. Theme Selection (Collapsible) */}
         <CollapsiblePanel
