@@ -38,6 +38,8 @@ export interface GPSState {
   error: string | null;
   loading: boolean;
   watching: boolean;
+  isHighPrecision?: boolean;
+  satelliteFixType?: 'fast' | 'gnss' | 'cached' | null;
 }
 
 export const DISTINCT_COLORS = [

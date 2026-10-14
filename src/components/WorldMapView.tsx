@@ -138,7 +138,20 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({
   // High-precision geolocation and user tracking state
   const [isLocating, setIsLocating] = useState(false);
   const [locateFeedback, setLocateFeedback] = useState<{ message: string; type: 'success' | 'warning' } | null>(null);
-  const [lastKnownUserPos, setLastKnownUserPos] = useState<{ lat: number; lng: number; accuracy?: number | null } | null>(null);
+  const [lastKnownUserPos, setLastKnownUserPos] = useState<{ lat: number; lng: number; accuracy?: number | null } | null>(() => {
+    try {
+      const raw = localStorage.getItem('carto_last_known_gps');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+          return { lat: parsed.lat, lng: parsed.lng, accuracy: parsed.acc };
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  });
 
   // Category filter dropdown state & refs
   const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);

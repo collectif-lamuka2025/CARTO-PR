@@ -73,12 +73,19 @@ export async function putLocalCategory(category: Category): Promise<void> {
 }
 
 export async function putLocalCategoriesBatch(categories: Category[]): Promise<void> {
-  const db = await getLocalDB();
-  const tx = db.transaction('categories', 'readwrite');
-  for (const cat of categories) {
-    await tx.store.put(cat);
+  try {
+    const db = await getLocalDB();
+    const tx = db.transaction('categories', 'readwrite');
+    for (const cat of categories) {
+      tx.store.put(cat);
+    }
+    await Promise.race([
+      tx.done,
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+  } catch (err) {
+    console.warn('Erreur putLocalCategoriesBatch:', err);
   }
-  await tx.done;
 }
 
 export async function deleteLocalCategory(categoryId: string): Promise<void> {
@@ -102,12 +109,19 @@ export async function putLocalLocation(location: PartnerLocation): Promise<void>
 }
 
 export async function putLocalLocationsBatch(locations: PartnerLocation[]): Promise<void> {
-  const db = await getLocalDB();
-  const tx = db.transaction('locations', 'readwrite');
-  for (const loc of locations) {
-    await tx.store.put(loc);
+  try {
+    const db = await getLocalDB();
+    const tx = db.transaction('locations', 'readwrite');
+    for (const loc of locations) {
+      tx.store.put(loc);
+    }
+    await Promise.race([
+      tx.done,
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+  } catch (err) {
+    console.warn('Erreur putLocalLocationsBatch:', err);
   }
-  await tx.done;
 }
 
 export async function deleteLocalLocation(locationId: string): Promise<void> {

@@ -312,19 +312,21 @@ export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
     }
   };
 
-  // Evaluate accuracy tier
-  const getAccuracyBadge = (accuracy: number | null) => {
-    if (accuracy === null) return { label: 'Inconnue', color: 'bg-slate-700 text-slate-300' };
-    if (accuracy <= 6)
-      return { label: `± ${accuracy}m (Excellente)`, color: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' };
-    if (accuracy <= 15)
-      return { label: `± ${accuracy}m (Très bonne)`, color: 'bg-teal-500/20 text-teal-400 border border-teal-500/30' };
-    if (accuracy <= 30)
+  // Evaluate accuracy tier with GNSS fix indicator
+  const getAccuracyBadge = (accuracy: number | null, fixType?: 'fast' | 'gnss' | 'cached' | null) => {
+    if (accuracy === null) return { label: 'Recherche satellites...', color: 'bg-slate-700 text-slate-300' };
+    if (accuracy <= 5)
+      return { label: `± ${accuracy}m (GNSS Optimale)`, color: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' };
+    if (accuracy <= 10)
+      return { label: `± ${accuracy}m (Excellente)`, color: 'bg-teal-500/20 text-teal-400 border border-teal-500/30' };
+    if (accuracy <= 20)
+      return { label: `± ${accuracy}m (Très bonne)`, color: 'bg-blue-500/20 text-blue-400 border border-blue-500/30' };
+    if (accuracy <= 35)
       return { label: `± ${accuracy}m (Standard)`, color: 'bg-amber-500/20 text-amber-400 border border-amber-500/30' };
     return { label: `± ${accuracy}m (Approximative)`, color: 'bg-rose-500/20 text-rose-400 border border-rose-500/30' };
   };
 
-  const accBadge = getAccuracyBadge(gps.accuracy);
+  const accBadge = getAccuracyBadge(gps.accuracy, gps.satelliteFixType);
 
   return (
     <div className="flex flex-col flex-1 h-full w-full bg-slate-100 dark:bg-slate-950 overflow-hidden relative">
@@ -575,6 +577,23 @@ export const CaptureLocationView: React.FC<CaptureLocationViewProps> = ({
                   {gps.accuracy !== null ? `±${gps.accuracy} m` : '...'}
                 </span>
               </div>
+            </div>
+
+            {/* GNSS Precision & Fix Source Info */}
+            <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
+              <span className="text-slate-400 flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${gps.isHighPrecision ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400'}`} />
+                {gps.satelliteFixType === 'gnss'
+                  ? 'Verrou Multi-Satellites'
+                  : gps.satelliteFixType === 'fast'
+                  ? 'Triangulation Rapide'
+                  : 'Position en Cache'}
+              </span>
+              {gps.heading !== null && (
+                <span className="text-cyan-400 font-mono font-semibold">
+                  🧭 {gps.heading}°
+                </span>
+              )}
             </div>
           </div>
         </div>

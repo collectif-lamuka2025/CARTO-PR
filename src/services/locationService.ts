@@ -7,6 +7,7 @@ import {
   query,
   getDocs,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Category, PartnerLocation, DEFAULT_STRATEGIC_CATEGORIES } from '../types';
@@ -53,27 +54,27 @@ export function broadcastLocations(locations: PartnerLocation[]) {
 
 function cleanLocationForFirestore(loc: PartnerLocation): Record<string, any> {
   const data: Record<string, any> = {
-    id: loc.id,
-    name: loc.name.trim(),
+    id: String(loc.id),
+    name: String(loc.name || '').trim() || 'Partenaire',
     categoryId: loc.categoryId || 'default',
-    categoryName: loc.categoryName || 'Général',
+    categoryName: String(loc.categoryName || 'Général').trim(),
     categoryColor: loc.categoryColor || '#3B82F6',
-    latitude: Number(loc.latitude),
-    longitude: Number(loc.longitude),
+    latitude: Number(loc.latitude) || 0,
+    longitude: Number(loc.longitude) || 0,
     agentId: loc.agentId || 'guest_agent',
     agentEmail: loc.agentEmail || 'agent@terrain.local',
     createdAt: loc.createdAt || new Date().toISOString(),
     updatedAt: loc.updatedAt || new Date().toISOString(),
   };
 
-  if (loc.partnerName && loc.partnerName.trim()) {
-    data.partnerName = loc.partnerName.trim();
+  if (loc.partnerName && String(loc.partnerName).trim()) {
+    data.partnerName = String(loc.partnerName).trim();
   }
-  if (loc.notes && loc.notes.trim()) {
-    data.notes = loc.notes.trim();
+  if (loc.notes && String(loc.notes).trim()) {
+    data.notes = String(loc.notes).trim();
   }
-  if (loc.phone && loc.phone.trim()) {
-    data.phone = loc.phone.trim();
+  if (loc.phone && String(loc.phone).trim()) {
+    data.phone = String(loc.phone).trim();
   }
   if (typeof loc.altitude === 'number' && !isNaN(loc.altitude)) {
     data.altitude = loc.altitude;
@@ -126,15 +127,15 @@ export function setLocalLocationsCache(userId: string | undefined, locations: Pa
 
 function cleanCategoryForFirestore(cat: Category): Record<string, any> {
   const data: Record<string, any> = {
-    id: cat.id,
-    name: cat.name.trim(),
+    id: String(cat.id),
+    name: String(cat.name || '').trim() || 'Général',
     color: cat.color || '#10B981',
     icon: cat.icon || 'Store',
     createdBy: cat.createdBy || 'agent',
     createdAt: cat.createdAt || new Date().toISOString(),
   };
-  if (cat.description && cat.description.trim()) {
-    data.description = cat.description.trim();
+  if (cat.description && String(cat.description).trim()) {
+    data.description = String(cat.description).trim();
   }
   return data;
 }
@@ -407,10 +408,10 @@ export function subscribeToSyncStatus(listener: SyncStatusListener) {
 export async function saveCategory(category: Category): Promise<Category[]> {
   const cleanCat: Category = {
     id: category.id,
-    name: category.name.trim(),
+    name: String(category.name || '').trim() || 'Général',
     color: category.color || '#10B981',
     icon: category.icon || 'Store',
-    description: category.description?.trim() || undefined,
+    description: category.description ? String(category.description).trim() : undefined,
     createdBy: category.createdBy || 'agent',
     createdAt: category.createdAt || new Date().toISOString(),
   };
@@ -433,7 +434,10 @@ export async function saveCategory(category: Category): Promise<Category[]> {
   try {
     const docRef = doc(db, CATEGORIES_COLLECTION, cleanCat.id);
     const payload = cleanCategoryForFirestore(cleanCat);
-    await setDoc(docRef, payload, { merge: true });
+    // Non-blocking fire-and-forget to avoid blocking UI on network latency
+    setDoc(docRef, payload, { merge: true }).catch((err) => {
+      console.warn('Sync catégorie Firestore différée:', err?.message || err);
+    });
   } catch (err: any) {
     console.warn('Sauvegarde catégorie Firestore différée ou locale:', err?.message || err);
   }
@@ -450,7 +454,9 @@ export async function deleteCategory(categoryId: string, userId?: string): Promi
 
   try {
     const docRef = doc(db, CATEGORIES_COLLECTION, categoryId);
-    await deleteDoc(docRef);
+    deleteDoc(docRef).catch((err) => {
+      console.warn('Suppression catégorie Firestore différée:', err?.message || err);
+    });
   } catch (err: any) {
     console.warn('Suppression catégorie Firestore différée ou locale:', err?.message || err);
   }
@@ -462,17 +468,17 @@ export async function deleteCategory(categoryId: string, userId?: string): Promi
 export async function savePartnerLocation(location: PartnerLocation): Promise<PartnerLocation[]> {
   const cleanLoc: PartnerLocation = {
     id: location.id,
-    name: location.name.trim(),
-    partnerName: location.partnerName?.trim() || undefined,
+    name: String(location.name || '').trim() || 'Partenaire',
+    partnerName: location.partnerName ? String(location.partnerName).trim() : undefined,
     categoryId: location.categoryId || 'default',
-    categoryName: location.categoryName || 'Général',
+    categoryName: String(location.categoryName || 'Général').trim(),
     categoryColor: location.categoryColor || '#3B82F6',
     latitude: Number(location.latitude),
     longitude: Number(location.longitude),
-    altitude: typeof location.altitude === 'number' ? location.altitude : null,
-    accuracy: typeof location.accuracy === 'number' ? location.accuracy : null,
-    notes: location.notes?.trim() || undefined,
-    phone: location.phone?.trim() || undefined,
+    altitude: typeof location.altitude === 'number' && !isNaN(location.altitude) ? location.altitude : null,
+    accuracy: typeof location.accuracy === 'number' && !isNaN(location.accuracy) ? location.accuracy : null,
+    notes: location.notes ? String(location.notes).trim() : undefined,
+    phone: location.phone ? String(location.phone).trim() : undefined,
     agentId: location.agentId || 'guest_agent',
     agentEmail: location.agentEmail || 'agent@terrain.local',
     createdAt: location.createdAt || new Date().toISOString(),
@@ -494,7 +500,10 @@ export async function savePartnerLocation(location: PartnerLocation): Promise<Pa
   try {
     const docRef = doc(db, LOCATIONS_COLLECTION, cleanLoc.id);
     const payload = cleanLocationForFirestore(cleanLoc);
-    await setDoc(docRef, payload, { merge: true });
+    // Non-blocking fire-and-forget to avoid blocking UI
+    setDoc(docRef, payload, { merge: true }).catch((err) => {
+      console.warn('Sync position Firestore différée:', err?.message || err);
+    });
   } catch (err: any) {
     console.warn('Sauvegarde position Firestore différée ou locale:', err?.message || err);
   }
@@ -548,3 +557,89 @@ export async function deletePartnerLocation(locationId: string, userId?: string)
 
   return updated;
 }
+
+// ----------------- Bulk Import Partner Locations (CSV / Excel) -----------------
+export async function importPartnerLocationsBulk(
+  locations: PartnerLocation[],
+  userId?: string
+): Promise<{ added: number; updatedList: PartnerLocation[] }> {
+  if (!locations || locations.length === 0) {
+    const current = getLocalLocationsCache(userId);
+    return { added: 0, updatedList: current };
+  }
+
+  const current = getLocalLocationsCache(userId);
+  const existingIds = new Set(current.map((l) => l.id));
+
+  const validNewLocations: PartnerLocation[] = [];
+
+  for (const loc of locations) {
+    const finalId =
+      loc.id && !existingIds.has(loc.id)
+        ? loc.id
+        : `loc_imp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    existingIds.add(finalId);
+
+    const cleanLoc: PartnerLocation = {
+      id: finalId,
+      name: String(loc.name || '').trim() || 'Partenaire',
+      partnerName: loc.partnerName ? String(loc.partnerName).trim() : undefined,
+      categoryId: loc.categoryId || 'default',
+      categoryName: String(loc.categoryName || 'Général').trim(),
+      categoryColor: loc.categoryColor || '#3B82F6',
+      latitude: Number(loc.latitude) || 0,
+      longitude: Number(loc.longitude) || 0,
+      altitude: typeof loc.altitude === 'number' && !isNaN(loc.altitude) ? loc.altitude : null,
+      accuracy: typeof loc.accuracy === 'number' && !isNaN(loc.accuracy) ? loc.accuracy : null,
+      notes: loc.notes ? String(loc.notes).trim() : undefined,
+      phone: loc.phone ? String(loc.phone).trim() : undefined,
+      agentId: userId || loc.agentId || 'guest_agent',
+      agentEmail: loc.agentEmail || 'agent@terrain.local',
+      createdAt: loc.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    validNewLocations.push(cleanLoc);
+  }
+
+  // 1. Merge into local cache synchronously for immediate UI reactivity
+  const updatedList = [...validNewLocations, ...current];
+  setLocalLocationsCache(userId, updatedList);
+  broadcastLocations(updatedList);
+
+  // 2. Sync to IndexedDB for offline resilience (in non-blocking background)
+  (async () => {
+    try {
+      const { putLocalLocationsBatch } = await import('./db');
+      await putLocalLocationsBatch(validNewLocations);
+    } catch (e) {
+      console.warn('Sync IndexedDB import partenaire différée:', e);
+    }
+  })();
+
+  // 3. Sync to Firestore in background using writeBatch (up to 400 docs per batch)
+  // This NEVER blocks the user's validation button or UI!
+  (async () => {
+    try {
+      const BATCH_SIZE = 400;
+      for (let i = 0; i < validNewLocations.length; i += BATCH_SIZE) {
+        const chunk = validNewLocations.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(db);
+        for (const loc of chunk) {
+          const docRef = doc(db, LOCATIONS_COLLECTION, loc.id);
+          const payload = cleanLocationForFirestore(loc);
+          batch.set(docRef, payload, { merge: true });
+        }
+        await Promise.race([
+          batch.commit(),
+          new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]);
+      }
+    } catch (err: any) {
+      console.warn('Sauvegarde import Firestore différée ou locale:', err?.message || err);
+    }
+  })();
+
+  return { added: validNewLocations.length, updatedList };
+}
+

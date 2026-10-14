@@ -174,6 +174,7 @@ function AppContent() {
             <LocationsListView
               locations={locations}
               categories={categories}
+              user={user}
               onSelectOnMap={handleSelectOnMap}
               onTraceRoute={handleTraceRoute}
             />
